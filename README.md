@@ -57,7 +57,7 @@ Evaluation metrics include NDCG@k, Recall@k, Precision@k, MAP, and MRR, followin
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/nghidanh2005/beir-retrieval-benchmark.git
+git clone https://github.com/ihatesea69/beir-retrieval-benchmark.git
 cd beir-retrieval-benchmark
 ```
 

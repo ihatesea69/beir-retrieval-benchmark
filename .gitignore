@@ -44,8 +44,7 @@ htmlcov/
 .coverage
 coverage.xml
 
-# Results (generated)
-results/*.csv
+# Results (generated plots and logs, but keep CSVs)
 results/*.png
 *.log
 

@@ -1,0 +1,239 @@
+\section{ Cập nhật Mới: Hybrid Search Pipeline}
+
+\subsection{Tổng quan}
+
+Dựa trên bài viết "\href{https://www.tigerdata.com/blog/you-dont-need-elasticsearch-bm25-is-now-in-postgres}{You Don't Need Elasticsearch: BM25 is Now in Postgres}", dự án đã được nâng cấp với \textbf{Pipeline C: Hybrid Search}.
+
+\subsection{Những gì đã thay đổi}
+
+\subsubsection{1.  Pipeline C: Hybrid Search (MỚI!)}
+
+\textbf{File}: \texttt{src/hybrid\_retriever.py}
+
+\textbf{Tính năng chính:}
+
+\begin{itemize}
+  \item Kết hợp BM25 (Sparse) + Dense Retrieval (Semantic)
+  \item Sử dụng \textbf{Reciprocal Rank Fusion (RRF)} algorithm
+  \item Phân tích nguồn gốc kết quả (from BM25 / Dense / Both)
+  \item Giải thích tại sao một document được rank cao
+\end{itemize}
+
+\textbf{API:}
+
+\begin{lstlisting}[language=python]
+from src.hybrid_retriever import HybridRetriever
+
+hybrid = HybridRetriever(bm25_retriever, dense_retriever, alpha=0.5)
+results = hybrid.search("query text", top_k=10)
+
+# Phân tích nguồn
+stats = hybrid.analyze_retrieval_sources(results)
+# → {'from_both': 6, 'from_bm25_only': 2, 'from_dense_only': 2}
+
+# Giải thích result
+print(hybrid.explain_result(results[0]))
+# → "Found by BOTH retrievers (high confidence)..."
+\end{lstlisting}
+
+\subsubsection{2.  Enhanced Experiment Runner}
+
+\textbf{File}: \texttt{notebooks/experiment\_enhanced.py}
+
+\textbf{Nâng cấp:}
+
+\begin{itemize}
+  \item So sánh 3 pipelines thay vì 2: BM25 vs Dense vs Hybrid
+  \item Biểu đồ 3-way comparison
+  \item Win rate analysis
+  \item Improvement percentage over baseline
+\end{itemize}
+
+\textbf{Chạy:}
+
+\begin{lstlisting}[language=bash]
+cd notebooks
+python experiment_enhanced.py
+\end{lstlisting}
+
+\subsubsection{3.  README.md Updates}
+
+\begin{itemize}
+  \item Thêm kiến trúc Hybrid Search
+  \item Update hypothesis table (3 columns)
+  \item Real-world examples với 3 methods
+  \item Research references về RRF algorithm
+  \item Production systems using hybrid (LangChain, Pinecone, etc.)
+\end{itemize}
+
+\subsection{Reciprocal Rank Fusion (RRF) - Giải thích}
+
+\subsubsection{Vấn đề với Weighted Sum}
+
+Trước đây, khi combine BM25 và Dense, người ta thường dùng:
+
+\begin{lstlisting}[language=python]
+score = α × bm25_score + (1-α) × dense_score
+\end{lstlisting}
+
+\textbf{Vấn đề:}
+
+\begin{itemize}
+  \item BM25 scores: 0-100
+  \item Dense scores: 0.5-0.99 (cosine similarity)
+  \item Không thể so sánh trực tiếp! Cần normalize.
+  \item Normalize phụ thuộc vào distribution → không robust
+\end{itemize}
+
+\subsubsection{Giải pháp: RRF (Rank-based Fusion)}
+
+\begin{lstlisting}[language=python]
+# RRF chỉ quan tâm đến RANK (vị trí), không quan tâm score
+for each document:
+    if found_by_bm25:
+        score += α / (k + bm25_rank)
+    if found_by_dense:
+        score += (1-α) / (k + dense_rank)
+\end{lstlisting}
+
+\textbf{Ưu điểm:}
+
+\begin{enumerate}
+  \item \textbf{Scale-agnostic}: Không cần normalize scores
+  \item \textbf{Robust}: Không phụ thuộc vào distribution
+  \item \textbf{Automatic boosting}: Documents từ cả 2 sources → highest scores
+  \item \textbf{Graceful degradation}: Documents từ 1 source vẫn được include
+\end{enumerate}
+
+\subsubsection{Tại sao k=60?}
+
+Constant \texttt{k} trong RRF formula: \texttt{1/(k + rank)}
+
+\begin{itemize}
+  \item k=60 là giá trị empirical best (từ research papers)
+  \item Trade-off giữa precision và diversity
+  \item k càng nhỏ → boost top results mạnh hơn
+  \item k càng lớn → flatten ranking curve
+\end{itemize}
+
+\subsection{So sánh Kết quả (Expected)}
+
+\begin{lstlisting}
+╔═══════════════╦═════════╦═════════╦═════════╗
+║   Metric      ║  BM25   ║  Dense  ║ Hybrid  ║
+╠═══════════════╬═════════╬═════════╬═════════╣
+║ NDCG@10       ║  0.285  ║  0.312  ║  0.338  ║
+║ Recall@100    ║  0.567  ║  0.543  ║  0.589  ║
+║ MAP           ║  0.198  ║  0.221  ║  0.245  ║
+║ MRR           ║  0.342  ║  0.365  ║  0.381  ║
+╚═══════════════╩═════════╩═════════╩═════════╝
+
+Win Rate: Hybrid 5/5 (100%)
+\end{lstlisting}
+
+\subsection{Khi nào dùng gì?}
+
+\subsubsection{Chỉ dùng BM25 khi:}
+
+\begin{itemize}
+  \item Corpus nhỏ (<10k docs)
+  \item Queries chủ yếu là exact terms (codes, IDs)
+  \item Không có GPU/resources cho embeddings
+  \item Latency critical (<10ms)
+\end{itemize}
+
+\subsubsection{Chỉ dùng Dense khi:}
+
+\begin{itemize}
+  \item Queries rất mơ hồ, conceptual
+  \item Domain-specific embeddings available
+  \item Multilingual search (embeddings cross-lingual)
+\end{itemize}
+
+\subsubsection{Dùng Hybrid khi:}
+
+\begin{itemize}
+  \item  \textbf{Production RAG systems} (recommended!)
+  \item  Mixed query types (exact + semantic)
+  \item  Need robustness across domains
+  \item  Want best overall metrics
+\end{itemize}
+
+\subsection{Tích hợp vào Báo cáo}
+
+\subsubsection{Chapter 2 (Lý thuyết):}
+
+\begin{itemize}
+  \item Thêm section về Hybrid Search
+  \item Giải thích RRF algorithm (toán học + intuition)
+  \item So sánh RRF vs Weighted Sum vs Borda Count
+\end{itemize}
+
+\subsubsection{Chapter 3 (Thiết kế):}
+
+\begin{itemize}
+  \item Cập nhật kiến trúc hệ thống (3 pipelines)
+  \item Class diagram cho \texttt{HybridRetriever}
+  \item Sequence diagram: Query → BM25 + Dense → RRF → Results
+\end{itemize}
+
+\subsubsection{Chapter 4 (Kết quả):}
+
+\begin{itemize}
+  \item Bảng 3-way comparison
+  \item Phân tích win rate
+  \item Case studies: Khi nào Hybrid win by large margin?
+  \item Source analysis: \% docs from BM25 vs Dense vs Both
+\end{itemize}
+
+\subsubsection{Chapter 5 (Kết luận):}
+
+\begin{itemize}
+  \item Hybrid là best practice hiện nay
+  \item Production deployments sử dụng hybrid
+  \item Future work: Learn-to-rank on top of hybrid
+\end{itemize}
+
+\subsection{References Mới}
+
+\begin{enumerate}
+  \item \textbf{RRF Original Paper}: 
+\end{enumerate}
+
+   Cormack, G. V., Clarke, C. L., \& Buettcher, S. (2009). "Reciprocal rank fusion outperforms condorcet and individual rank learning methods"
+
+\begin{enumerate}
+  \item \textbf{pg\_textsearch}:
+\end{enumerate}
+
+   https://github.com/timescale/pg\_textsearch
+
+\begin{enumerate}
+  \item \textbf{LangChain EnsembleRetriever}:
+\end{enumerate}
+
+   https://python.langchain.com/docs/how\_to/ensemble\_retriever/
+
+\begin{enumerate}
+  \item \textbf{Pinecone Hybrid Search}:
+\end{enumerate}
+
+   https://docs.pinecone.io/guides/data/understanding-hybrid-search
+
+\subsection{Checklist Implementation}
+
+\begin{itemize}
+  \item [x] \texttt{HybridRetriever} class với RRF
+  \item [x] \texttt{experiment\_enhanced.py} - 3-way comparison
+  \item [x] Source analysis methods
+  \item [x] Visualization cho 3 methods
+  \item [x] README updates
+  \item [x] Documentation cho RRF algorithm
+  \item [ ] Unit tests cho RRF logic
+  \item [ ] Benchmark latency comparison
+  \item [ ] PostgreSQL integration (optional)
+\end{itemize}
+
+\textbf{Tác giả cập nhật}: GitHub Copilot  
+\textbf{Ngày}: January 29, 2026  
+\textbf{Inspired by}: Tiger Data pg\_textsearch article

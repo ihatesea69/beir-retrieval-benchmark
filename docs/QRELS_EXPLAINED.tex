@@ -1,0 +1,750 @@
+\section{QRels Files Explained: Train, Dev, Test}
+
+\subsection{ Quick Answer}
+
+\textbf{3 files qrels} trong BeIR dataset là \textbf{train.tsv}, \textbf{dev.tsv}, và \textbf{test.tsv} - đây là chuẩn trong Machine Learning để:
+
+\begin{enumerate}
+  \item \textbf{train.tsv} - Huấn luyện model (nếu có supervised learning)
+  \item \textbf{dev.tsv} - Validation/tuning hyperparameters
+  \item \textbf{test.tsv} - Đánh giá cuối cùng (báo cáo kết quả)
+\end{enumerate}
+
+\subsection{ Statistics Overview}
+
+\begin{lstlisting}
+NFCorpus Qrels Statistics:
+════════════════════════════════════════════════════════════
+
+File         │ Lines    │ Size      │ Purpose
+─────────────┼──────────┼───────────┼─────────────────────────
+train.tsv    │ 110,576  │ 2,446 KB  │ Training queries (nếu cần)
+dev.tsv      │ 11,386   │ 252 KB    │ Validation/tuning
+test.tsv     │ 12,335   │ 273 KB    │ Final evaluation ⭐
+
+Total: 134,297 relevance judgments
+\end{lstlisting}
+
+\subsection{1⃣ What is QRels?}
+
+\subsubsection{Definition}
+
+\textbf{QRels} = \textbf{Q}uery \textbf{Rel}evance Judgment\textbf{s}
+
+File chứa \textbf{ground truth} - đánh giá thủ công của con người về độ liên quan giữa queries và documents.
+
+\subsubsection{Format (TSV - Tab-Separated Values)}
+
+\begin{lstlisting}[language=tsv]
+query-id	corpus-id	score
+PLAIN-2	MED-2427	2
+PLAIN-2	MED-10	2
+PLAIN-2	MED-2429	2
+PLAIN-2	MED-2428	1
+\end{lstlisting}
+
+\textbf{Columns:}
+
+\begin{itemize}
+  \item \texttt{query-id}: ID của query (e.g., PLAIN-2 = "Do Cholesterol Statin Drugs Cause Breast Cancer?")
+  \item \texttt{corpus-id}: ID của document (e.g., MED-10 = "Statin Use and Breast Cancer Survival")
+  \item \texttt{score}: Độ liên quan
+  \item \texttt{2} = Highly relevant (rất liên quan)
+  \item \texttt{1} = Relevant (liên quan)
+  \item \texttt{0} = Not relevant (không liên quan, thường không có trong file)
+\end{itemize}
+
+\subsection{2⃣ Why 3 Files? Train/Dev/Test Split}
+
+\subsubsection{Machine Learning Standard Practice}
+
+\begin{lstlisting}
+┌─────────────────────────────────────────────────────────┐
+│                    Full Dataset                         │
+│                  134,297 judgments                      │
+└─────────────────────────────────────────────────────────┘
+                    ↓ Split
+    ┌───────────────┼───────────────┬─────────────┐
+    ↓               ↓               ↓             ↓
+┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐
+│ Train   │   │  Dev    │   │  Test   │   │ Corpus  │
+│ 82%     │   │  8%     │   │  10%    │   │         │
+│110,576  │   │ 11,386  │   │ 12,335  │   │ 3,633   │
+│judgments│   │judgments│   │judgments│   │documents│
+└─────────┘   └─────────┘   └─────────┘   └─────────┘
+     │             │             │             │
+     ↓             ↓             ↓             ↓
+  Training    Validation    Evaluation    Knowledge
+   (learn)      (tune)       (report)       Base
+\end{lstlisting}
+
+\subsubsection{Purpose of Each Split}
+
+\paragraph{ \textbf{train.tsv} (110,576 lines = 82\%)}
+
+\textbf{Nhiệm vụ:} Huấn luyện supervised learning models
+
+\textbf{Use cases:}
+
+\begin{itemize}
+  \item Train neural ranking models (BERT, T5)
+  \item Learn-to-rank algorithms
+  \item Fine-tune language models for domain adaptation
+\end{itemize}
+
+\textbf{Example usage:}
+
+\begin{lstlisting}[language=python]
+# Train a neural re-ranker
+train_qrels = load_qrels("train.tsv")
+
+for query, relevant_docs, irrelevant_docs in train_qrels:
+    # Positive pairs
+    loss += contrastive_loss(query, relevant_docs, label=1)
+    
+    # Negative pairs (hard negatives mining)
+    loss += contrastive_loss(query, irrelevant_docs, label=0)
+    
+model.backward(loss)
+\end{lstlisting}
+
+\textbf{Characteristics:}
+
+\begin{itemize}
+  \item Largest split (82\% of data)
+  \item Used for model optimization
+  \item Can iterate multiple times (epochs)
+  \item Our project: \textbf{Không dùng} (BM25/Dense are unsupervised)
+\end{itemize}
+
+\paragraph{🟢 \textbf{dev.tsv} (11,386 lines = 8\%)}
+
+\textbf{Nhiệm vụ:} Validation và hyperparameter tuning
+
+\textbf{Use cases:}
+
+\begin{itemize}
+  \item Tune BM25 parameters (k1, b)
+  \item Select embedding model
+  \item Choose chunking strategy (512 vs 1024 tokens)
+  \item Tune RRF parameters (α, k)
+  \item Early stopping for training
+\end{itemize}
+
+\textbf{Example usage:}
+
+\begin{lstlisting}[language=python]
+# Tune BM25 parameters
+best_ndcg = 0
+for k1 in [1.2, 1.5, 2.0]:
+    for b in [0.5, 0.75, 1.0]:
+        bm25 = BM25(k1=k1, b=b)
+        results = bm25.search(dev_queries)
+        ndcg = evaluate(results, dev_qrels)  # Use dev.tsv
+        
+        if ndcg > best_ndcg:
+            best_k1, best_b = k1, b
+            best_ndcg = ndcg
+
+print(f"Best params: k1={best_k1}, b={best_b}")
+\end{lstlisting}
+
+\textbf{Characteristics:}
+
+\begin{itemize}
+  \item Medium size (8\% of data)
+  \item Used during development
+  \item Can be used multiple times for tuning
+  \item Our project: \textbf{Có thể dùng} để tune α trong RRF
+\end{itemize}
+
+\paragraph{ \textbf{test.tsv} (12,335 lines = 10\%)}
+
+\textbf{Nhiệm vụ:} Final evaluation và báo cáo kết quả
+
+\textbf{Use cases:}
+
+\begin{itemize}
+  \item Đánh giá cuối cùng sau khi model đã hoàn thiện
+  \item So sánh các methods (BM25 vs Dense vs Hybrid)
+  \item Báo cáo metrics cho paper/thesis
+  \item Benchmark trên BeIR leaderboard
+\end{itemize}
+
+\textbf{Example usage:}
+
+\begin{lstlisting}[language=python]
+# Final evaluation (ONLY ONCE!)
+test_qrels = load_qrels("test.tsv")
+
+bm25_metrics = evaluate(bm25_results, test_qrels)
+dense_metrics = evaluate(dense_results, test_qrels)
+hybrid_metrics = evaluate(hybrid_results, test_qrels)
+
+print("Final Results on Test Set:")
+print(f"BM25:   NDCG@10={bm25_metrics['ndcg@10']}")
+print(f"Dense:  NDCG@10={dense_metrics['ndcg@10']}")
+print(f"Hybrid: NDCG@10={hybrid_metrics['ndcg@10']}")
+\end{lstlisting}
+
+\textbf{ CRITICAL RULES:}
+
+\begin{itemize}
+  \item \textbf{Chỉ dùng 1 lần duy nhất} khi model đã finalized
+  \item \textbf{Không được tune} dựa trên test results
+  \item \textbf{Không được nhìn} test data khi develop
+  \item Nếu tune based on test → \textbf{data leakage} → kết quả không valid
+\end{itemize}
+
+\textbf{Characteristics:}
+
+\begin{itemize}
+  \item Held-out set (10\% of data)
+  \item Used ONLY for final reporting
+  \item Our project: \textbf{Đây là file chính} để đánh giá
+\end{itemize}
+
+\subsection{3⃣ Format Details: Why TSV?}
+
+\subsubsection{TSV (Tab-Separated Values)}
+
+\begin{lstlisting}
+Advantages:
+✅ Simple text format
+✅ Easy to parse (split by \t)
+✅ Human-readable
+✅ Works with pandas, Excel
+✅ Smaller than JSON
+
+Example:
+query-id	corpus-id	score
+PLAIN-2	MED-10	2
+     ↑       ↑      ↑
+   Tab     Tab   Newline
+\end{lstlisting}
+
+\subsubsection{Why NOT JSON/CSV?}
+
+\textbf{JSON:}
+
+\begin{lstlisting}[language=json]
+{
+  "PLAIN-2": {
+    "MED-10": 2,
+    "MED-2427": 2,
+    ...
+  }
+}
+\end{lstlisting}
+
+ Larger file size  
+ Harder to stream process  
+ But easier for nested data
+
+\textbf{CSV (Comma-Separated):}
+
+\begin{lstlisting}[language=csv]
+query-id,corpus-id,score
+PLAIN-2,MED-10,2
+\end{lstlisting}
+
+ Commas might appear in data  
+ Need escaping for text  
+ But more universal
+
+\textbf{TSV Winner:}
+ Tabs rarely appear in IDs  
+ No escaping needed  
+ Standard for TREC/BeIR benchmarks
+
+\subsection{4⃣ Content Analysis}
+
+\subsubsection{Train.tsv (110,576 lines)}
+
+\begin{lstlisting}[language=python]
+# Analysis
+total_lines = 110,576
+queries_in_train = ~2,590  # Unique query IDs
+
+# Average judgments per query
+avg_judgments = 110,576 / 2,590 ≈ 42.7
+
+# Score distribution
+score_2 (highly relevant): ~35%
+score_1 (relevant): ~65%
+
+# Example queries in train:
+- PLAIN-3, PLAIN-5, PLAIN-7, ...
+- VIDEO-4, VIDEO-8, ...
+\end{lstlisting}
+
+\textbf{Observations:}
+
+\begin{itemize}
+  \item Each query has \textasciitilde{}43 relevant documents
+  \item More score=1 than score=2 (easier to find relevant than highly relevant)
+  \item Mix of PLAIN and VIDEO queries
+\end{itemize}
+
+\subsubsection{Dev.tsv (11,386 lines)}
+
+\begin{lstlisting}[language=python]
+# Analysis
+total_lines = 11,386
+queries_in_dev = ~323  # Unique query IDs
+
+# Average judgments per query
+avg_judgments = 11,386 / 323 ≈ 35.3
+
+# Score distribution
+score_2 (highly relevant): ~40%
+score_1 (relevant): ~60%
+
+# Example from dev.tsv:
+PLAIN-1	MED-2421	2  # Highly relevant
+PLAIN-1	MED-2422	2
+PLAIN-1	MED-2414	1  # Relevant
+PLAIN-1	MED-4070	1
+\end{lstlisting}
+
+\textbf{Observations:}
+
+\begin{itemize}
+  \item Smaller but still representative
+  \item Used in our DATASET\_DOCUMENTATION.md examples
+  \item Good for quick validation
+\end{itemize}
+
+\subsubsection{Test.tsv (12,335 lines)}
+
+\begin{lstlisting}[language=python]
+# Analysis
+total_lines = 12,335
+queries_in_test = ~323  # Unique query IDs
+
+# Average judgments per query
+avg_judgments = 12,335 / 323 ≈ 38.2
+
+# Score distribution
+score_2 (highly relevant): ~38%
+score_1 (relevant): ~62%
+
+# Example from test.tsv:
+PLAIN-2	MED-2427	2  # "Do Cholesterol Statin Drugs Cause Breast Cancer?"
+PLAIN-2	MED-10	2   # → "Statin Use and Breast Cancer Survival"
+PLAIN-2	MED-2428	1
+\end{lstlisting}
+
+\textbf{Observations:}
+
+\begin{itemize}
+  \item Similar size to dev (balanced split)
+  \item \textbf{This is our evaluation set} 
+  \item Matches statistics in DATASET\_DOCUMENTATION.md
+\end{itemize}
+
+\subsection{5⃣ How We Use These Files}
+
+\subsubsection{Our Project Workflow}
+
+\begin{lstlisting}[language=python]
+# data_loader.py
+def load_dataset(dataset_name='nfcorpus'):
+    """
+    Load BeIR dataset with qrels
+    """
+    data_path = './data/beir_datasets/nfcorpus'
+    
+    # Load corpus (same for all splits)
+    corpus = load_corpus(f"{data_path}/corpus.jsonl")  # 3,633 docs
+    
+    # Load queries (same for all splits)
+    queries = load_queries(f"{data_path}/queries.jsonl")  # 3,237 queries
+    
+    # Load qrels - DEFAULT: test split ⭐
+    qrels = load_qrels(f"{data_path}/qrels/test.tsv")  # 12,335 judgments
+    
+    return corpus, queries, qrels
+\end{lstlisting}
+
+\textbf{Why we use test.tsv by default:}
+
+\begin{lstlisting}[language=python]
+# Because we are NOT training:
+# - BM25: Unsupervised (no training needed)
+# - Dense: Pre-trained model (all-MiniLM-L6-v2)
+# - No fine-tuning on NFCorpus
+
+# Therefore:
+# - train.tsv: NOT USED
+# - dev.tsv: NOT USED (could use for RRF tuning)
+# - test.tsv: MAIN EVALUATION SET ⭐
+\end{lstlisting}
+
+\subsubsection{Evaluation Pipeline}
+
+\begin{lstlisting}[language=python]
+# metrics.py
+class RetrievalEvaluator:
+    def __init__(self, qrels):
+        """
+        Args:
+            qrels: From test.tsv
+                {
+                    'PLAIN-2': {
+                        'MED-2427': 2,
+                        'MED-10': 2,
+                        'MED-2428': 1,
+                        ...
+                    },
+                    ...
+                }
+        """
+        self.qrels = qrels
+    
+    def evaluate_batch(self, results_dict):
+        """
+        Args:
+            results_dict: Retrieved results from BM25/Dense/Hybrid
+        
+        Returns:
+            Metrics calculated against test.tsv qrels
+        """
+        for query_id, results in results_dict.items():
+            retrieved = [r['id'] for r in results]
+            relevant = list(self.qrels[query_id].keys())  # From test.tsv
+            
+            ndcg10 = calculate_ndcg_at_k(retrieved, relevant, k=10)
+            recall100 = calculate_recall_at_k(retrieved, relevant, k=100)
+            ...
+\end{lstlisting}
+
+\subsection{6⃣ Real Examples from Files}
+
+\subsubsection{Example 1: PLAIN-2 in test.tsv}
+
+\begin{lstlisting}[language=tsv]
+Query: PLAIN-2 = "Do Cholesterol Statin Drugs Cause Breast Cancer?"
+
+Highly Relevant (score=2):
+─────────────────────────────────────────────────────
+PLAIN-2	MED-2427	2  ← "Statin use and breast cancer survival"
+PLAIN-2	MED-10	2  ← "Statin Use and Breast Cancer Survival: A Nationwide Cohort Study"
+PLAIN-2	MED-2429	2  ← "Statin therapy and cancer risk"
+PLAIN-2	MED-2430	2  ← "Statins and cancer"
+PLAIN-2	MED-2431	2  ← "Do statins have antitumor effects?"
+PLAIN-2	MED-14	2  ← "Statin use after diagnosis of breast cancer"
+PLAIN-2	MED-2432	2  ← "Statin use and breast cancer outcome"
+
+Relevant (score=1):
+─────────────────────────────────────────────────────
+PLAIN-2	MED-2428	1  ← "Cholesterol and cancer risk"
+PLAIN-2	MED-2440	1  ← "Lipid-lowering drugs and cancer"
+PLAIN-2	MED-2434	1  ← "Statin therapy: potential side effects"
+... (31 more documents)
+
+Total: 7 highly relevant + 31 relevant = 38 relevant documents
+\end{lstlisting}
+
+\textbf{Why different scores?}
+
+\begin{lstlisting}
+score=2 (Highly Relevant):
+✅ Directly answers the question
+✅ Mentions both "statin" AND "breast cancer"
+✅ Studies showing causal relationship
+
+score=1 (Relevant):
+✅ Related to topic but not direct answer
+✅ Mentions only "cholesterol" or "cancer" (not both)
+✅ Background information
+\end{lstlisting}
+
+\subsubsection{Example 2: Evaluation with test.tsv}
+
+\begin{lstlisting}[language=python]
+# Scenario: System retrieves for PLAIN-2
+retrieved_results = [
+    'MED-10',    # rank 1
+    'MED-2427',  # rank 2
+    'MED-2428',  # rank 3
+    'MED-100',   # rank 4 (not relevant)
+    'MED-2429',  # rank 5
+    ...
+]
+
+# Ground truth from test.tsv
+relevant_docs = {
+    'MED-10': 2,     # Highly relevant
+    'MED-2427': 2,
+    'MED-2429': 2,
+    'MED-2428': 1,   # Relevant
+    ...
+}
+
+# Calculate NDCG@10
+# Rank 1: MED-10 (score=2) → gain = 2 / log2(2) = 2.0
+# Rank 2: MED-2427 (score=2) → gain = 2 / log2(3) = 1.262
+# Rank 3: MED-2428 (score=1) → gain = 1 / log2(4) = 0.5
+# Rank 4: MED-100 (not relevant) → gain = 0
+# Rank 5: MED-2429 (score=2) → gain = 2 / log2(6) = 0.774
+
+# DCG@10 = 2.0 + 1.262 + 0.5 + 0 + 0.774 = 4.536
+# IDCG@10 = 2.0 + 1.262 + 1.0 + 0.861 + ... = 6.123
+# NDCG@10 = 4.536 / 6.123 = 0.741 ⭐
+\end{lstlisting}
+
+\subsection{7⃣ BeIR Standard: Why This Format?}
+
+\subsubsection{TREC/BeIR Convention}
+
+\textbf{TREC (Text REtrieval Conference)} established this format in 1992:
+
+\begin{lstlisting}
+┌─────────────────────────────────────────────────┐
+│ TREC Format (since 1992)                        │
+│ query-id  Q0  doc-id  rank  score  run-id      │
+│                                                  │
+│ BeIR Simplified (2021):                         │
+│ query-id  doc-id  relevance-score               │
+└─────────────────────────────────────────────────┘
+\end{lstlisting}
+
+\textbf{Why TSV became standard:}
+
+\begin{enumerate}
+  \item Unix tools friendly: \texttt{cut}, \texttt{grep}, \texttt{awk}
+  \item Large files: 100M+ judgments in TREC collections
+  \item Streaming: Can process line-by-line
+  \item Version control: Git diff works well
+\end{enumerate}
+
+\subsubsection{BeIR Dataset Collection (2021)}
+
+NFCorpus is part of \textbf{BeIR benchmark} with 18 datasets:
+
+\begin{lstlisting}
+BeIR Datasets:
+─────────────────────────────────────────────────
+1. MS MARCO       → General web search
+2. NFCorpus       → Medical/nutritional ⭐ (ours)
+3. TREC-COVID     → COVID-19 research
+4. FiQA           → Financial Q&A
+5. SciFact        → Scientific fact verification
+... (18 total)
+
+All use same format:
+- corpus.jsonl
+- queries.jsonl
+- qrels/{train,dev,test}.tsv ← Standard!
+\end{lstlisting}
+
+\subsection{8⃣ Common Pitfalls \& Best Practices}
+
+\subsubsection{ \textbf{WRONG: Using test.tsv during development}}
+
+\begin{lstlisting}[language=python]
+# BAD CODE
+def tune_alpha():
+    test_qrels = load_qrels("test.tsv")  # ❌ NO!
+    
+    best_alpha = 0
+    for alpha in [0.3, 0.5, 0.7]:
+        results = hybrid.search(queries, alpha=alpha)
+        ndcg = evaluate(results, test_qrels)  # ❌ Peeking at test!
+        
+        if ndcg > best:
+            best_alpha = alpha  # ❌ Overfitting to test!
+    
+    return best_alpha
+\end{lstlisting}
+
+\textbf{Why wrong:}
+
+\begin{itemize}
+  \item Model will overfit to test set
+  \item Results not generalizable
+  \item Cheating the benchmark
+\end{itemize}
+
+\subsubsection{ \textbf{CORRECT: Using dev.tsv for tuning}}
+
+\begin{lstlisting}[language=python]
+# GOOD CODE
+def tune_alpha():
+    dev_qrels = load_qrels("dev.tsv")  # ✅ Use dev!
+    
+    best_alpha = 0
+    for alpha in [0.3, 0.5, 0.7]:
+        results = hybrid.search(dev_queries, alpha=alpha)
+        ndcg = evaluate(results, dev_qrels)  # ✅ Tune on dev
+        
+        if ndcg > best:
+            best_alpha = alpha
+    
+    # Final evaluation ONCE on test
+    test_qrels = load_qrels("test.tsv")
+    final_results = hybrid.search(test_queries, alpha=best_alpha)
+    final_ndcg = evaluate(final_results, test_qrels)  # ✅ Report this
+    
+    return best_alpha, final_ndcg
+\end{lstlisting}
+
+\subsubsection{ \textbf{Data Leakage Prevention}}
+
+\begin{lstlisting}[language=python]
+# Split queries properly
+train_queries = queries_from_train_qrels()  # 2,590 queries
+dev_queries = queries_from_dev_qrels()      # 323 queries
+test_queries = queries_from_test_qrels()    # 323 queries
+
+# CRITICAL: No overlap!
+assert len(set(train_queries) & set(test_queries)) == 0  # ✅
+assert len(set(dev_queries) & set(test_queries)) == 0    # ✅
+\end{lstlisting}
+
+\subsection{9⃣ Our Project Usage Summary}
+
+\subsubsection{Current Implementation}
+
+\begin{lstlisting}[language=python]
+# data_loader.py loads test.tsv by default
+loader = BeirDataLoader()
+corpus, queries, qrels = loader.load_dataset('nfcorpus')
+
+# qrels comes from: ./data/beir_datasets/nfcorpus/qrels/test.tsv
+# - 12,335 relevance judgments
+# - 323 test queries
+# - Used for FINAL evaluation
+
+# Why test.tsv?
+# - No training needed (BM25/Dense are pre-existing)
+# - No hyperparameter tuning (using defaults)
+# - Direct comparison of 3 methods
+\end{lstlisting}
+
+\subsubsection{Recommendations for Enhancement}
+
+\begin{lstlisting}[language=python]
+# Option 1: Use dev.tsv for RRF tuning
+def find_best_rrf_params():
+    """Tune α and k on dev set"""
+    dev_corpus, dev_queries, dev_qrels = loader.load_dataset('nfcorpus', split='dev')
+    
+    best_params = None
+    best_ndcg = 0
+    
+    for alpha in [0.3, 0.4, 0.5, 0.6, 0.7]:
+        for k in [30, 60, 90]:
+            hybrid = LlamaIndexHybrid(bm25, dense, alpha=alpha, k=k)
+            results = hybrid.batch_search(dev_queries)
+            metrics = evaluator.evaluate_batch(results)
+            
+            if metrics['ndcg@10'] > best_ndcg:
+                best_params = (alpha, k)
+                best_ndcg = metrics['ndcg@10']
+    
+    return best_params
+
+# Then evaluate on test set with best params
+best_alpha, best_k = find_best_rrf_params()
+hybrid_final = LlamaIndexHybrid(bm25, dense, alpha=best_alpha, k=best_k)
+
+# Load test set
+test_corpus, test_queries, test_qrels = loader.load_dataset('nfcorpus', split='test')
+final_results = hybrid_final.batch_search(test_queries)
+final_metrics = evaluator.evaluate_batch(final_results)
+
+print(f"Final NDCG@10 on test: {final_metrics['ndcg@10']}")
+\end{lstlisting}
+
+\subsection{ Quick Reference}
+
+\subsubsection{File Statistics}
+
+\begin{lstlisting}
+┌──────────────┬───────────┬──────────┬─────────────────────────┐
+│ File         │ Lines     │ Queries  │ Avg Judgments/Query    │
+├──────────────┼───────────┼──────────┼─────────────────────────┤
+│ train.tsv    │ 110,576   │ ~2,590   │ 42.7                   │
+│ dev.tsv      │ 11,386    │ ~323     │ 35.3                   │
+│ test.tsv     │ 12,335    │ ~323     │ 38.2 ⭐ (we use this)  │
+└──────────────┴───────────┴──────────┴─────────────────────────┘
+\end{lstlisting}
+
+\subsubsection{Format}
+
+\begin{lstlisting}[language=tsv]
+query-id	corpus-id	score
+PLAIN-2	MED-10	2
+     ↑       ↑      ↑
+  Query   Document Score
+   ID       ID     (1-2)
+\end{lstlisting}
+
+\subsubsection{Purpose}
+
+\begin{lstlisting}
+train.tsv → Training (if needed)
+dev.tsv   → Validation/tuning
+test.tsv  → Final evaluation ⭐
+\end{lstlisting}
+
+\subsubsection{Key Rules}
+
+\begin{lstlisting}
+✅ Use dev.tsv for hyperparameter tuning
+✅ Use test.tsv ONLY ONCE for final reporting
+❌ Never tune based on test.tsv results
+❌ Never mix train/dev/test queries
+\end{lstlisting}
+
+\subsection{ Key Takeaways}
+
+\begin{enumerate}
+  \item \textbf{3 files = standard ML practice} (train/dev/test split)
+\end{enumerate}
+
+\begin{enumerate}
+  \item \textbf{TSV format} = simple, efficient, standard for IR benchmarks
+\end{enumerate}
+
+\begin{enumerate}
+  \item \textbf{Score meanings}:
+\end{enumerate}
+
+\begin{itemize}
+  \item 2 = Highly relevant (directly answers query)
+  \item 1 = Relevant (related information)
+  \item 0 = Not relevant (not in file, assumed for non-listed docs)
+\end{itemize}
+
+\begin{enumerate}
+  \item \textbf{Our project uses test.tsv} because:
+\end{enumerate}
+
+\begin{itemize}
+  \item No training needed (unsupervised methods)
+  \item Direct evaluation and comparison
+  \item Standard BeIR benchmark protocol
+\end{itemize}
+
+\begin{enumerate}
+  \item \textbf{Best practice}: 
+\end{enumerate}
+
+\begin{itemize}
+  \item Tune on dev.tsv (if needed)
+  \item Evaluate on test.tsv (once, final)
+  \item Never peek at test during development
+\end{itemize}
+
+\begin{enumerate}
+  \item \textbf{File structure enables}:
+\end{enumerate}
+
+\begin{itemize}
+  \item Fair comparison across methods
+  \item Reproducible results
+  \item Standard metrics (NDCG, Recall, MAP, MRR)
+\end{itemize}

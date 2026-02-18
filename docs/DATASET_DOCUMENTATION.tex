@@ -1,0 +1,589 @@
+\section{DATASET DOCUMENTATION: BeIR NFCorpus}
+
+\subsection{Overview}
+
+\textbf{NFCorpus} (Nutrition Facts Corpus) is a medical/nutrition dataset within the BeIR (Benchmarking IR) benchmark suite, specifically designed to evaluate Information Retrieval systems in the medical domain.
+
+\subsubsection{Dataset vs Knowledge Base: Understanding the Distinction}
+
+In the context of this project, it's crucial to understand the difference between these two concepts:
+
+\paragraph{\textbf{Dataset (Tập dữ liệu - For Evaluation)}}
+
+\textbf{Definition}: A standardized collection of data with ground truth labels used for benchmarking and evaluation.
+
+\textbf{In Our Project (NFCorpus)}:
+
+\begin{itemize}
+  \item \textbf{Purpose}: Measure and compare retrieval method performance
+  \item \textbf{Components}: 
+  \item Corpus: 3,633 medical documents
+  \item Queries: 323 test queries
+  \item Qrels: 12,334 expert-labeled relevance judgments (ground truth)
+  \item \textbf{Characteristics}:
+  \item Fixed structure and content (immutable during testing)
+  \item Contains ground truth for objective evaluation
+  \item Used for research and benchmarking
+  \item Enables metric calculation (NDCG@10, Recall@100, MAP, MRR)
+  \item \textbf{Usage}: Compare BM25 vs Dense vs Hybrid retrieval effectiveness
+\end{itemize}
+
+\paragraph{\textbf{Knowledge Base (Cơ sở tri thức - For Production)}}
+
+\textbf{Definition}: A collection of information that a RAG system uses to generate answers for real-world user queries.
+
+\textbf{In Production Applications}:
+
+\begin{itemize}
+  \item \textbf{Purpose}: Provide information to answer end-user questions
+  \item \textbf{Components}:
+  \item Domain-specific documents (company docs, manuals, wikis)
+  \item Continuously updated content
+  \item No pre-labeled queries or relevance judgments
+  \item \textbf{Characteristics}:
+  \item Dynamic (can be updated, expanded, modified)
+  \item No ground truth labels
+  \item Indexed in vector stores/search engines
+  \item Serves actual users in production
+  \item \textbf{Usage}: Support RAG systems for question-answering, chatbots, search
+\end{itemize}
+
+\paragraph{\textbf{NFCorpus in Our Project: Dual Role}}
+
+NFCorpus serves \textbf{BOTH} purposes in our research:
+
+\begin{enumerate}
+  \item \textbf{As a Dataset} (Primary role):
+\end{enumerate}
+
+   ``\texttt{
+   NFCorpus → Test BM25/Dense/Hybrid → Calculate metrics → Compare results
+   Goal: "Which retrieval method performs best on medical domain?"
+   }``
+
+\begin{enumerate}
+  \item \textbf{As a Knowledge Base} (Simulated production):
+\end{enumerate}
+
+   ``\texttt{
+   NFCorpus → Index in PostgreSQL/BM25 → Retrieve docs → Generate answers
+   Goal: "Test end-to-end RAG pipeline with realistic medical content"
+   }``
+
+\paragraph{\textbf{Workflow Comparison}}
+
+\textbf{Research Phase (Dataset Usage)}:
+
+\begin{lstlisting}
+Step 1: Load NFCorpus with qrels
+Step 2: Run retrieval methods on 323 test queries
+Step 3: Compare retrieved docs vs ground truth (qrels)
+Step 4: Compute NDCG@10, Recall@100, etc.
+Step 5: Identify best retrieval method
+\end{lstlisting}
+
+\textbf{Production Deployment (Knowledge Base Usage)}:
+
+\begin{lstlisting}
+Step 1: Index hospital's 10,000 medical documents
+Step 2: User asks: "What are side effects of aspirin?"
+Step 3: Retrieve top-k relevant documents (no ground truth)
+Step 4: LLM generates answer using retrieved context
+Step 5: Return answer to user
+\end{lstlisting}
+
+\paragraph{\textbf{Key Differences Summary}}
+
+\begin{tabular}{|l|l|l|}
+  \hline
+  Aspect & Dataset (NFCorpus) & Knowledge Base (Production) \\
+  \hline
+  \textbf{Purpose} & Evaluation \& benchmarking & Information retrieval \& generation \\
+  \textbf{Ground Truth} &  Has relevance labels &  No labels \\
+  \textbf{Content} & Fixed (3,633 docs) & Dynamic (continuously updated) \\
+  \textbf{Queries} & Pre-defined (323 queries) & User-generated (unpredictable) \\
+  \textbf{Metrics} & Quantitative (NDCG, Recall) & Qualitative (user satisfaction) \\
+  \textbf{Update Frequency} & Static & Frequent updates \\
+  \textbf{Domain} & Research benchmark & Real business domain \\
+  \hline
+\end{tabular}
+
+\paragraph{\textbf{Why This Matters}}
+
+Understanding this distinction is critical because:
+
+\begin{enumerate}
+  \item \textbf{Evaluation Strategy}: We use NFCorpus as a dataset to measure performance objectively before deploying to production
+  \item \textbf{Generalization}: Good performance on NFCorpus dataset suggests the method will work well on real medical knowledge bases
+  \item \textbf{Development Workflow}: Test on dataset → Optimize → Deploy to knowledge base
+  \item \textbf{Expectations}: Dataset metrics (NDCG@10 = 0.35) don't directly predict production user satisfaction, but indicate relative method quality
+\end{enumerate}
+
+\subsection{Basic Statistics}
+
+\begin{tabular}{|l|l|}
+  \hline
+  Metric & Value \\
+  \hline
+  \textbf{Total Documents} & 3,633 \\
+  \textbf{Total Queries} & 323 \\
+  \textbf{Relevance Judgments} & 12,334 \\
+  \textbf{Domain} & Medical/Nutrition \\
+  \textbf{Language} & English \\
+  \textbf{Source} & PubMed Medical Articles \\
+  \hline
+\end{tabular}
+
+\subsection{Document Statistics}
+
+\subsubsection{Document Length Distribution}
+
+\begin{tabular}{|l|l|l|}
+  \hline
+  Metric & Characters & Words (approx) \\
+  \hline
+  \textbf{Average Length} & 1,497 chars & \textasciitilde{}250 words \\
+  \textbf{Median Length} & 1,517 chars & \textasciitilde{}253 words \\
+  \textbf{Min Length} & 90 chars & \textasciitilde{}15 words \\
+  \textbf{Max Length} & 9,939 chars & \textasciitilde{}1,656 words \\
+  \textbf{Std Deviation} & 549 chars & \textasciitilde{}92 words \\
+  \hline
+\end{tabular}
+
+\subsubsection{Title Statistics}
+
+\begin{tabular}{|l|l|}
+  \hline
+  Metric & Value \\
+  \hline
+  \textbf{Average Title Length} & 93 characters \\
+  \textbf{Median Title Length} & 91 characters \\
+  \textbf{Max Title Length} & 234 characters \\
+  \hline
+\end{tabular}
+
+\textbf{Characteristics:}
+
+\begin{itemize}
+  \item Documents primarily consist of abstracts from PubMed medical articles
+  \item Length distribution is relatively uniform (std = 549 chars), suitable for retrieval tasks
+  \item Titles are descriptive and informative, providing sufficient context about document content
+\end{itemize}
+
+\subsection{Query Characteristics}
+
+\subsubsection{Query Length Distribution}
+
+\begin{tabular}{|l|l|l|}
+  \hline
+  Metric & Characters & Words (approx) \\
+  \hline
+  \textbf{Average Length} & 22 chars & \textasciitilde{}3-4 words \\
+  \textbf{Median Length} & 18 chars & \textasciitilde{}3 words \\
+  \textbf{Min Length} & 3 chars & 1 word \\
+  \textbf{Max Length} & 72 chars & \textasciitilde{}12 words \\
+  \hline
+\end{tabular}
+
+\subsubsection{Query Types}
+
+\textbf{Examples:}
+
+\begin{enumerate}
+  \item \textbf{Short factoid queries} (3-20 chars):
+\end{enumerate}
+
+\begin{itemize}
+  \item "diabetes"
+  \item "cancer treatment"
+  \item "vitamin D"
+\end{itemize}
+
+\begin{enumerate}
+  \item \textbf{Natural language questions} (20-50 chars):
+\end{enumerate}
+
+\begin{itemize}
+  \item "Do Cholesterol Statin Drugs Cause Breast Cancer?"
+  \item "What causes diabetes?"
+  \item "How to prevent heart disease?"
+\end{itemize}
+
+\begin{enumerate}
+  \item \textbf{Complex information needs} (50-72 chars):
+\end{enumerate}
+
+\begin{itemize}
+  \item "What's the relationship between obesity and cardiovascular disease?"
+\end{itemize}
+
+\textbf{Characteristics:}
+
+\begin{itemize}
+  \item Diverse in length and style (keyword vs natural language queries)
+  \item Reflects real-world search behavior in the medical domain
+  \item Challenging for both lexical (BM25) and semantic (dense) retrieval methods
+\end{itemize}
+
+\subsection{Relevance Judgments}
+
+\subsubsection{Distribution}
+
+\begin{tabular}{|l|l|}
+  \hline
+  Metric & Value \\
+  \hline
+  \textbf{Avg Relevant Docs per Query} & 38.19 \\
+  \textbf{Median Relevant Docs} & 16 \\
+  \textbf{Min Relevant Docs} & 1 \\
+  \textbf{Max Relevant Docs} & 475 \\
+  \textbf{Total Judgments} & 12,334 \\
+  \hline
+\end{tabular}
+
+\subsubsection{Relevance Levels}
+
+NFCorpus uses a \textbf{2-level relevance scale}:
+
+\begin{tabular}{|l|l|l|}
+  \hline
+  Level & Meaning & Description \\
+  \hline
+  \textbf{2} & Highly Relevant & Document directly answers query, high quality \\
+  \textbf{1} & Relevant & Document contains useful information, partially relevant \\
+  \hline
+\end{tabular}
+
+\textbf{Characteristics:}
+
+\begin{itemize}
+  \item \textbf{High recall challenge}: Avg 38 relevant docs per query requires retrieving many documents
+  \item \textbf{Variable difficulty}: Some queries have 1 relevant doc (very hard), while others have 475 (easier)
+  \item \textbf{Binary+ scale}: 2 levels allow quality distinction while remaining simple to annotate
+\end{itemize}
+
+\subsection{Domain Analysis}
+
+\subsubsection{Medical Keywords Coverage}
+
+NFCorpus focuses on \textbf{nutrition \& health}, as reflected in the keyword distribution:
+
+\begin{tabular}{|l|l|l|}
+  \hline
+  Keyword & Documents & Coverage \\
+  \hline
+  \textbf{study} & 1,704 & 46.9\% \\
+  \textbf{risk} & 1,288 & 35.5\% \\
+  \textbf{health} & 1,265 & 34.8\% \\
+  \textbf{disease} & 1,131 & 31.1\% \\
+  \textbf{cancer} & 790 & 21.7\% \\
+  \textbf{diabetes} & \textasciitilde{}500 & \textasciitilde{}13.8\% \\
+  \textbf{treatment} & \textasciitilde{}480 & \textasciitilde{}13.2\% \\
+  \textbf{patient} & \textasciitilde{}450 & \textasciitilde{}12.4\% \\
+  \hline
+\end{tabular}
+
+\subsubsection{Content Categories}
+
+Based on analysis, documents cover:
+
+\begin{enumerate}
+  \item \textbf{Nutrition \& Diet} (30\%):
+\end{enumerate}
+
+\begin{itemize}
+  \item Vitamins, supplements
+  \item Dietary patterns
+  \item Food-disease relationships
+\end{itemize}
+
+\begin{enumerate}
+  \item \textbf{Chronic Diseases} (25\%):
+\end{enumerate}
+
+\begin{itemize}
+  \item Diabetes
+  \item Cardiovascular disease
+  \item Cancer
+\end{itemize}
+
+\begin{enumerate}
+  \item \textbf{Preventive Medicine} (20\%):
+\end{enumerate}
+
+\begin{itemize}
+  \item Risk factors
+  \item Lifestyle interventions
+  \item Screening
+\end{itemize}
+
+\begin{enumerate}
+  \item \textbf{Clinical Studies} (15\%):
+\end{enumerate}
+
+\begin{itemize}
+  \item Treatment efficacy
+  \item Drug effects
+  \item Clinical trials
+\end{itemize}
+
+\begin{enumerate}
+  \item \textbf{Public Health} (10\%):
+\end{enumerate}
+
+\begin{itemize}
+  \item Epidemiology
+  \item Health policies
+  \item Population studies
+\end{itemize}
+
+\subsection{Sample Data}
+
+\subsubsection{Sample Document}
+
+\begin{lstlisting}
+ID: MED-10
+Title: Statin Use and Breast Cancer Survival: A Nationwide Cohort Study from Finland
+
+Text: Recent studies have suggested that statins, an established drug group in 
+the prevention of cardiovascular mortality, could delay or prevent breast cancer 
+recurrence but the effect on disease-specific mortality remains unclear. We 
+evaluated risk of breast cancer death among statin users in a population-based 
+cohort of breast cancer patients. The study cohort included all newly diagnosed 
+breast cancer patients in Finland during 1995–2003 (31,236 cases), identified 
+from the Finnish Cancer Registry...
+
+[1,497 characters total]
+\end{lstlisting}
+
+\subsubsection{Sample Query}
+
+\begin{lstlisting}
+ID: PLAIN-2
+Query: Do Cholesterol Statin Drugs Cause Breast Cancer?
+Relevant Documents: 24
+Top Relevance Level: 2 (Highly Relevant)
+\end{lstlisting}
+
+\subsection{Use Cases and Applications}
+
+\subsubsection{1. \textbf{Medical Information Retrieval}}
+
+\begin{itemize}
+  \item Find research papers matching health queries
+  \item Literature review automation
+  \item Evidence-based medicine support
+\end{itemize}
+
+\subsubsection{2. \textbf{Question Answering Systems}}
+
+\begin{itemize}
+  \item Medical FAQ systems
+  \item Patient education platforms
+  \item Clinical decision support
+\end{itemize}
+
+\subsubsection{3. \textbf{Retrieval Method Comparison}}
+
+\begin{itemize}
+  \item BM25 (lexical matching): Good for exact terms like "diabetes", "statin"
+  \item Dense (semantic): Better for paraphrases like "heart disease" vs "cardiovascular disease"
+  \item Hybrid: Best overall performance combining both strengths
+\end{itemize}
+
+\subsubsection{4. \textbf{Benchmark for Retrieval Models}}
+
+\begin{itemize}
+  \item Standard benchmark in BeIR suite
+  \item Compare retrieval performance across models
+  \item Zero-shot evaluation (models not trained on NFCorpus)
+\end{itemize}
+
+\subsection{Dataset Characteristics}
+
+\subsubsection{Strengths}
+
+\begin{itemize}
+  \item \textbf{Domain-specific}: Pure medical/nutrition domain
+  \item \textbf{Realistic queries}: Mix of keywords and natural language
+  \item \textbf{Rich relevance judgments}: 38 avg relevant docs per query
+  \item \textbf{Quality documents}: PubMed abstracts, peer-reviewed
+  \item \textbf{Challenging}: Tests both lexical and semantic understanding
+\end{itemize}
+
+\subsubsection{Challenges}
+
+\begin{itemize}
+  \item \textbf{Vocabulary gap}: Medical terminology differs between queries and documents
+  \item \textbf{Synonym problem}: "heart disease" ≠ "cardiovascular disease" for BM25
+  \item \textbf{High recall requirement}: Need to retrieve many relevant docs (avg 38)
+  \item \textbf{Variable difficulty}: Some queries have 1 relevant doc, others have 475  
+\end{itemize}
+
+\subsection{Evaluation Metrics}
+
+\subsubsection{Recommended Metrics for NFCorpus}
+
+\begin{tabular}{|l|l|l|}
+  \hline
+  Metric & Why? & Target \\
+  \hline
+  \textbf{NDCG@10} & Measures ranking quality in top results & > 0.30 \\
+  \textbf{Recall@100} & High recall needed (38 avg relevant docs) & > 0.25 \\
+  \textbf{MAP} & Overall precision-recall balance & > 0.15 \\
+  \textbf{MRR} & First relevant result position & > 0.50 \\
+  \textbf{Precision@10} & Top-10 quality & > 0.20 \\
+  \hline
+\end{tabular}
+
+\subsubsection{Baseline Performance}
+
+Based on BeIR benchmark:
+
+\begin{tabular}{|l|l|l|}
+  \hline
+  Method & NDCG@10 & Recall@100 \\
+  \hline
+  \textbf{BM25} & 0.325 & 0.237 \\
+  \textbf{DPR} & 0.301 & 0.245 \\
+  \textbf{ANCE} & 0.333 & 0.261 \\
+  \textbf{Contriever} & 0.324 & 0.251 \\
+  \hline
+\end{tabular}
+
+\textbf{Our Implementation (50 queries test):}
+
+\begin{itemize}
+  \item BM25: NDCG@10 = 0.195, Recall@100 = 0.233
+  \item Dense (all-MiniLM): NDCG@10 = 0.353, Recall@100 = 0.277
+  \item Hybrid (RRF): NDCG@10 = 0.283, Recall@100 = 0.280
+\end{itemize}
+
+\subsection{Data Loading}
+
+\subsubsection{Using Our DataLoader}
+
+\begin{lstlisting}[language=python]
+from src.data_loader import BeirDataLoader
+
+# Initialize
+loader = BeirDataLoader()
+
+# Load dataset
+corpus, queries, qrels = loader.load_dataset('nfcorpus')
+
+# Prepare for indexing
+documents = loader.prepare_corpus_for_indexing(corpus)
+
+# Sample queries for testing
+test_queries = loader.get_sample_queries(queries, n=50)
+\end{lstlisting}
+
+\subsubsection{Data Structure}
+
+\textbf{Corpus Format:}
+
+\begin{lstlisting}[language=python]
+{
+    'MED-10': {
+        'title': 'Statin Use and Breast Cancer Survival...',
+        'text': 'Recent studies have suggested that...'
+    },
+    ...
+}
+\end{lstlisting}
+
+\textbf{Queries Format:}
+
+\begin{lstlisting}[language=python]
+{
+    'PLAIN-2': 'Do Cholesterol Statin Drugs Cause Breast Cancer?',
+    ...
+}
+\end{lstlisting}
+
+\textbf{Qrels Format:}
+
+\begin{lstlisting}[language=python]
+{
+    'PLAIN-2': {
+        'MED-10': 2,  # Relevance level
+        'MED-45': 1,
+        ...
+    },
+    ...
+}
+\end{lstlisting}
+
+\subsection{References}
+
+\begin{enumerate}
+  \item \textbf{BeIR Benchmark Paper:}
+\end{enumerate}
+
+\begin{itemize}
+  \item Thakur, Nandan, et al. "BEIR: A heterogeneous benchmark for zero-shot evaluation of information retrieval models." NeurIPS 2021.
+  \item https://arxiv.org/abs/2104.08663
+\end{itemize}
+
+\begin{enumerate}
+  \item \textbf{NFCorpus Original:}
+\end{enumerate}
+
+\begin{itemize}
+  \item Boteva, Vera, et al. "A full-text learning to rank dataset for medical information retrieval." ECIR 2016.
+\end{itemize}
+
+\begin{enumerate}
+  \item \textbf{BeIR Repository:}
+\end{enumerate}
+
+\begin{itemize}
+  \item https://github.com/beir-cellar/beir
+\end{itemize}
+
+\begin{enumerate}
+  \item \textbf{NFCorpus on BeIR:}
+\end{enumerate}
+
+\begin{itemize}
+  \item https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip
+\end{itemize}
+
+\subsection{Best Practices}
+
+\subsubsection{1. \textbf{Data Splitting}}
+
+\begin{itemize}
+  \item Use provided test set (323 queries)
+  \item Sample 50-100 queries for quick experiments
+  \item Use full set for final evaluation
+\end{itemize}
+
+\subsubsection{2. \textbf{Preprocessing}}
+
+\begin{itemize}
+  \item Keep original text (no stemming/lemmatization)
+  \item Preserve medical terminology
+  \item Use title + text for indexing
+\end{itemize}
+
+\subsubsection{3. \textbf{Evaluation}}
+
+\begin{itemize}
+  \item Report NDCG@10 (primary metric)
+  \item Report Recall@100 (high recall needed)
+  \item Compare with BeIR baselines
+\end{itemize}
+
+\subsubsection{4. \textbf{Baseline Comparison}}
+
+\begin{itemize}
+  \item Always compare with BM25
+  \item Test semantic models (dense retrieval)
+  \item Consider hybrid approaches (BM25 + Dense)
+\end{itemize}
+
+\textbf{Last Updated:} January 29, 2026  
+\textbf{Dataset Version:} BeIR NFCorpus v1.0  
+\textbf{Analysis:} Based on full corpus of 3,633 documents, 323 queries

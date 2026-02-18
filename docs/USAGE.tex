@@ -1,0 +1,136 @@
+\section{Hướng dẫn Sử dụng}
+
+\subsection{Bước 1: Cài đặt môi trường}
+
+\begin{lstlisting}[language=bash]
+# Tạo virtual environment
+python -m venv venv
+
+# Activate (Windows)
+.\venv\Scripts\activate
+
+# Cài đặt packages
+pip install -r requirements.txt
+\end{lstlisting}
+
+\subsection{Bước 2: Cấu hình API Key}
+
+\begin{enumerate}
+  \item Copy file \texttt{.env.example} thành \texttt{.env}
+  \item Thêm OpenAI API key vào file \texttt{.env}:
+\end{enumerate}
+
+   ``\texttt{
+   OPENAI\_API\_KEY=sk-your-key-here
+   }``
+
+\subsection{Bước 3: Chạy thí nghiệm}
+
+\subsubsection{Test nhanh từng module:}
+
+\begin{lstlisting}[language=bash]
+# Test Data Loader
+python src/data_loader.py
+
+# Test BM25 Retriever
+python src/bm25_retriever.py
+
+# Test RAG System
+python src/rag_system.py
+
+# Test Evaluation
+python evaluation/metrics.py
+\end{lstlisting}
+
+\subsubsection{Chạy experiment đầy đủ:}
+
+\begin{lstlisting}[language=bash]
+cd notebooks
+python experiment_runner.py
+\end{lstlisting}
+
+\subsection{Bước 4: Xem kết quả}
+
+Kết quả được lưu trong thư mục \texttt{results/}:
+
+\begin{itemize}
+  \item \texttt{bm25\_results\_nfcorpus.csv}: Kết quả BM25
+  \item \texttt{rag\_results\_nfcorpus.csv}: Kết quả RAG
+  \item \texttt{comparison\_nfcorpus.csv}: So sánh giữa 2 hệ thống
+  \item \texttt{comparison\_plot.png}: Biểu đồ trực quan
+\end{itemize}
+
+\subsection{Lưu ý quan trọng}
+
+\subsubsection{Về dữ liệu BeIR:}
+
+\begin{itemize}
+  \item Dataset sẽ được tải tự động lần đầu (khoảng 50-200MB)
+  \item Lưu trong thư mục \texttt{data/beir\_datasets/}
+  \item Nếu muốn test nhanh, dùng \texttt{nfcorpus} (nhỏ nhất)
+\end{itemize}
+
+\subsubsection{Về OpenAI API:}
+
+\begin{itemize}
+  \item Generation evaluation cần OpenAI API key
+  \item Nếu không có key, có thể skip generation evaluation:
+\end{itemize}
+
+  ``\texttt{python
+  df\_rag, df\_gen = runner.run\_rag\_experiment(evaluate\_generation=False)
+  }``
+
+\begin{itemize}
+  \item Cost ước tính: \textasciitilde{}\$0.50 cho 100 queries (với GPT-3.5-turbo)
+\end{itemize}
+
+\subsubsection{Về thời gian chạy:}
+
+\begin{itemize}
+  \item NFCorpus (50 queries): \textasciitilde{}5-10 phút
+  \item MS MARCO (100 queries): \textasciitilde{}20-30 phút (do corpus lớn hơn)
+\end{itemize}
+
+\subsection{Troubleshooting}
+
+\subsubsection{Lỗi import module:}
+
+\begin{lstlisting}[language=bash]
+# Thêm thư mục gốc vào PYTHONPATH
+export PYTHONPATH="${PYTHONPATH}:/path/to/project"  # Linux/Mac
+set PYTHONPATH=%PYTHONPATH%;C:\path\to\project  # Windows
+\end{lstlisting}
+
+\subsubsection{Lỗi download BeIR:}
+
+\begin{itemize}
+  \item Kiểm tra kết nối internet
+  \item Thử download thủ công từ: https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/
+\end{itemize}
+
+\subsubsection{Lỗi FAISS:}
+
+\begin{lstlisting}[language=bash]
+# Nếu có lỗi với faiss-cpu, thử cài faiss-gpu (nếu có GPU)
+pip uninstall faiss-cpu
+pip install faiss-gpu
+\end{lstlisting}
+
+\subsection{Cấu trúc Output}
+
+\begin{lstlisting}
+results/
+├── bm25_results_nfcorpus.csv       # Chi tiết kết quả BM25
+├── rag_results_nfcorpus.csv        # Chi tiết kết quả RAG
+├── comparison_nfcorpus.csv         # Bảng so sánh
+└── comparison_plot.png             # Biểu đồ
+
+Các cột trong file CSV:
+- query_id: ID của câu hỏi
+- NDCG@{k}: NDCG score tại top-k
+- Recall@{k}: Recall score tại top-k
+- Precision@{k}: Precision score tại top-k
+- MAP: Mean Average Precision
+- MRR: Mean Reciprocal Rank
+\end{lstlisting}

@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+env/
+venv/
+.venv/
+ENV/
+
+# Data & Models (large files)
+data/
+models/
+storage/
+*.pkl
+*.pt
+*.pth
+*.h5
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-*
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Testing
+.hypothesis/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Results (generated)
+results/*.csv
+results/*.png
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Kiro
+.kiro/

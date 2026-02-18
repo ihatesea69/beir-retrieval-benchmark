@@ -1,0 +1,501 @@
+\section{CORPUS vs QUERIES: Detailed Explanation}
+
+\subsection{ Quick Summary}
+
+\begin{tabular}{|l|l|l|}
+  \hline
+  Aspect & Corpus & Queries \\
+  \hline
+  \textbf{What is it?} & Database of documents & Questions users ask \\
+  \textbf{Count} & 3,633 documents & 3,237 questions \\
+  \textbf{Role} & The search target & The search input \\
+  \textbf{Analogy} & Wikipedia articles & Google search queries \\
+  \hline
+\end{tabular}
+
+\subsection{ CORPUS (Tài Liệu/Kho Dữ Liệu)}
+
+\subsubsection{Definition}
+
+\textbf{Corpus} = Complete collection of \textbf{source documents} that the retrieval system searches through
+
+Think of it as:
+
+\begin{itemize}
+  \item \textbf{Library}: A corpus is like a library with 3,633 books
+  \item \textbf{Database}: All the medical papers in the system
+  \item \textbf{Search Target}: What your search engine is searching IN
+\end{itemize}
+
+\subsubsection{Structure}
+
+\begin{lstlisting}[language=json]
+{
+  "_id": "MED-10",                    // Document ID (unique identifier)
+  "title": "Statin Use and Breast Cancer Survival: A Nationwide Cohort Study from Finland",
+  "text": "Recent studies have suggested that statins, an established drug group in the prevention of cardiovascular mortality...",
+  "metadata": {
+    "url": "http://www.ncbi.nlm.nih.gov/pubmed/25329299"
+  }
+}
+\end{lstlisting}
+
+\subsubsection{Real Examples from NFCorpus}
+
+\paragraph{Document 1: MED-10}
+
+\begin{lstlisting}
+Title: "Statin Use and Breast Cancer Survival: A Nationwide Cohort Study from Finland"
+Content: Research about statins reducing breast cancer death risk among statin users
+Domain: Cardiology + Oncology
+Keywords: statin, cancer, survival, cohort study, mortality
+\end{lstlisting}
+
+\paragraph{Document 2: MED-14}
+
+\begin{lstlisting}
+Title: "Statin use after diagnosis of breast cancer and survival: a population-based cohort study"
+Content: Preclinical studies on simvastatin preventing breast cancer cell growth
+Domain: Oncology + Pharmacology
+Keywords: statin, breast cancer diagnosis, mortality reduction
+\end{lstlisting}
+
+\paragraph{Document 3: MED-118}
+
+\begin{lstlisting}
+Title: "Alkylphenols in human milk and their relations to dietary habits in central Taiwan"
+Content: Chemical analysis of compounds in breast milk related to diet
+Domain: Nutrition + Environmental Health
+Keywords: alkylphenols, milk, dietary habits, contamination
+\end{lstlisting}
+
+\subsubsection{Key Characteristics}
+
+\textbf{Size \& Scope:}
+
+\begin{itemize}
+  \item \textbf{3,633 documents} total
+  \item Each document = 1 JSONL line
+  \item Average document: \textasciitilde{}1,497 characters (\textasciitilde{}250 words)
+  \item Range: 90 chars to 9,939 chars
+\end{itemize}
+
+\textbf{Content Quality:}
+
+\begin{itemize}
+  \item All from \textbf{PubMed} (peer-reviewed medical research)
+  \item \textbf{Medical domain}: nutrition, health, diseases, treatments
+  \item High quality = expert-written abstracts
+\end{itemize}
+
+\textbf{Structure:}
+
+\begin{lstlisting}
+corpus.jsonl (1 file)
+├── Line 1: {"_id": "MED-10", "title": "...", "text": "...", "metadata": {...}}
+├── Line 2: {"_id": "MED-14", "title": "...", "text": "...", "metadata": {...}}
+├── ...
+└── Line 3633: {"_id": "MED-XXXX", "title": "...", "text": "...", "metadata": {...}}
+\end{lstlisting}
+
+\subsubsection{What Happens to Corpus in Your System}
+
+\begin{lstlisting}
+corpus.jsonl (3,633 docs)
+    ↓
+Data Loader (data_loader.py)
+    ↓
+prepare_corpus_for_indexing()
+    ↓
+Formatted Documents Dict
+{
+  'MED-10': {'id': 'MED-10', 'title': '...', 'text': '...', 'full_text': '...'},
+  'MED-14': {'id': 'MED-14', 'title': '...', 'text': '...', 'full_text': '...'},
+  ...
+}
+    ↓
+Split into 3 Branches:
+├── BM25: Build inverted index (in RAM)
+├── Dense: Generate embeddings → PostgreSQL
+└── Hybrid: Uses both above
+\end{lstlisting}
+
+\subsection{ QUERIES (Câu Hỏi/Truy Vấn)}
+
+\subsubsection{Definition}
+
+\textbf{Queries} = User \textbf{questions} or \textbf{search terms} that the system tries to answer by finding relevant documents from corpus
+
+Think of it as:
+
+\begin{itemize}
+  \item \textbf{Google Search Box}: What users type in the search bar
+  \item \textbf{Questions}: Real-world medical questions people ask
+  \item \textbf{Test Cases}: What the retrieval system must answer
+\end{itemize}
+
+\subsubsection{Structure}
+
+\begin{lstlisting}[language=json]
+{
+  "_id": "PLAIN-3",                  // Query ID (unique identifier)
+  "text": "Breast Cancer Cells Feed on Cholesterol",
+  "metadata": {
+    "url": "http://nutritionfacts.org/2015/07/14/breast-cancer-cells-feed-on-cholesterol/"
+  }
+}
+\end{lstlisting}
+
+\subsubsection{Real Examples from NFCorpus}
+
+\paragraph{Query 1: PLAIN-3}
+
+\begin{lstlisting}
+ID: PLAIN-3
+Question: "Breast Cancer Cells Feed on Cholesterol"
+
+What it's asking: 
+- Does cholesterol feed cancer cells?
+- What's the relationship between cholesterol and cancer?
+- How do cancer cells use cholesterol?
+
+Expected relevant docs:
+- MED-10: About statins (cholesterol drugs) and breast cancer survival
+- MED-14: Statin effects on cancer reduction
+- Other: Cancer prevention studies
+\end{lstlisting}
+
+\paragraph{Query 2: PLAIN-4}
+
+\begin{lstlisting}
+ID: PLAIN-4
+Question: "Using Diet to Treat Asthma and Eczema"
+
+What it's asking:
+- Can diet help treat asthma?
+- Can diet help treat eczema?
+- What dietary changes help these conditions?
+
+Expected relevant docs:
+- Any papers about nutrition and asthma
+- Any papers about nutrition and skin health
+\end{lstlisting}
+
+\paragraph{Query 3: PLAIN-5}
+
+\begin{lstlisting}
+ID: PLAIN-5
+Question: "Treating Asthma With Plants vs. Pills"
+
+What it's asking:
+- Comparing plant-based treatments vs pharmaceutical treatments for asthma
+- Which is more effective?
+- What are the alternatives to drugs?
+
+Expected relevant docs:
+- Studies on herbal asthma treatments
+- Studies comparing natural vs pharmaceutical approaches
+\end{lstlisting}
+
+\subsubsection{Query Statistics}
+
+\begin{lstlisting}
+Total Queries: 3,237
+
+Average Length: 22 characters (~3-4 words)
+Range: 3 chars to 72 chars
+
+Examples by length:
+- Short: "diabetes" (8 chars)
+- Medium: "Breast Cancer Cells Feed on Cholesterol" (39 chars)
+- Long: "What's the relationship between obesity and cardiovascular disease?" (67 chars)
+\end{lstlisting}
+
+\subsubsection{Query Types}
+
+\textbf{1. Simple Keyword Queries}
+
+\begin{lstlisting}
+"diabetes"
+"cancer treatment"
+"vitamin D deficiency"
+\end{lstlisting}
+
+\textbf{2. Natural Language Questions}
+
+\begin{lstlisting}
+"What causes diabetes?"
+"How to prevent heart disease?"
+"Does ginger help with nausea?"
+\end{lstlisting}
+
+\textbf{3. Comparative Questions}
+
+\begin{lstlisting}
+"Treating Asthma With Plants vs. Pills"
+"Low Carb Diets vs High Carb Diets"
+\end{lstlisting}
+
+\textbf{4. Complex Questions}
+
+\begin{lstlisting}
+"What is the relationship between obesity and cardiovascular disease?"
+"Are multivitamins just a waste of money?"
+\end{lstlisting}
+
+\subsubsection{What Happens to Queries in Your System}
+
+\begin{lstlisting}
+queries.jsonl (3,237 queries)
+    ↓
+Data Loader (data_loader.py)
+    ↓
+get_sample_queries(queries, n=50)  // Select 50 for quick testing
+    ↓
+Formatted Queries Dict
+{
+  'PLAIN-3': 'Breast Cancer Cells Feed on Cholesterol',
+  'PLAIN-4': 'Using Diet to Treat Asthma and Eczema',
+  'PLAIN-5': 'Treating Asthma With Plants vs. Pills',
+  ...
+}
+    ↓
+For Each Query:
+├── BM25: Search in inverted index
+├── Dense: Generate embedding → Vector similarity search
+└── Hybrid: Combine both results
+\end{lstlisting}
+
+\subsection{ CORPUS ↔ QUERIES Relationship}
+
+\subsubsection{The Matching Problem}
+
+\begin{lstlisting}
+Query: "Breast Cancer Cells Feed on Cholesterol"
+                    ↓
+                    
+Problem 1 - LEXICAL MISMATCH:
+Query has: "breast", "cancer", "cells", "feed", "cholesterol"
+Doc has: "statin", "breast", "cancer", "death", "risk", "Finland"
+→ BM25 struggles: missing "cholesterol", different exact words
+
+Problem 2 - SEMANTIC MISMATCH:
+Query means: "cholesterol nutrition for cancer"
+Doc is about: "statins (cholesterol drugs) reduce cancer death"
+→ BM25 might miss it (different wording, same topic)
+→ Dense helps: understands semantic similarity
+
+Expected Results:
+✅ MED-10 (about statins = cholesterol drugs)
+✅ MED-14 (also about statins and cancer)
+❌ Other docs about cholesterol but not cancer-related
+\end{lstlisting}
+
+\subsubsection{Example Search Scenario}
+
+\begin{lstlisting}
+User wants to know: "How does diet affect diabetes?"
+
+What Each Method Finds:
+
+BM25 (Lexical/Keyword):
+✅ Finds: "diabetes", "diet", "treatment" articles
+❌ Misses: "glucose control" (synonym), "blood sugar" (synonym)
+❌ Misses: "nutrition therapy" vs "diet therapy"
+
+Dense (Semantic):
+✅ Finds: "diabetes", "diet" articles (exact match)
+✅ Finds: "glucose", "blood sugar" (synonyms!)
+✅ Finds: "nutrition therapy" (similar meaning)
+✅ Finds: "managing blood glucose with food"
+❌ May retrieve "diabetes medication" (semantically related but not about diet)
+
+Hybrid:
+✅ Gets best of both worlds
+✅ Exact matches + semantic matches
+✅ More robust ranking
+\end{lstlisting}
+
+\subsection{ Corpus vs Queries Size Comparison}
+
+\begin{lstlisting}
+Corpus (Repository)          Queries (Questions)
+─────────────────────        ───────────────────
+3,633 documents              3,237 queries
+
+MED-10                       PLAIN-3
+MED-14                       PLAIN-4
+MED-118                      PLAIN-5
+...                          ...
+MED-721                      PLAIN-40
+
+~1,497 chars each            ~22 chars each
+~250 words each              ~3-4 words each
+Detailed abstracts           Concise questions
+From PubMed                  From nutritionfacts.org
+\end{lstlisting}
+
+\subsubsection{Ratio}
+
+\begin{lstlisting}
+Corpus : Queries = 3,633 : 3,237
+Average docs per query = 3,633 / 3,237 ≈ 1.12 docs per query
+
+But in reality (from qrels):
+Average RELEVANT docs per query = 38.19 docs
+
+This means:
+- Each query has ~38 documents that are actually relevant
+- The retrieval task is hard: find 38 needles in 3,633 haystacks!
+\end{lstlisting}
+
+\subsection{ How They Work Together in Your Experiment}
+
+\begin{lstlisting}
+WORKFLOW:
+─────────
+
+Step 1: Load Data
+    loader.load_dataset('nfcorpus')
+    ├─ corpus: Dict of 3,633 documents
+    └─ queries: Dict of 3,237 test queries
+
+Step 2: Sample & Prepare
+    test_queries = get_sample_queries(queries, n=50)
+    documents = prepare_corpus_for_indexing(corpus)
+    
+    Now working with:
+    ├─ 50 test queries (smaller for quick testing)
+    └─ 3,633 documents (full corpus)
+
+Step 3: Index Building
+    BM25: Index all 3,633 documents
+    Dense: Embed & store all 3,633 documents
+    
+Step 4: Retrieval
+    For each of 50 queries:
+    ├─ Retrieve top-100 results from corpus
+    ├─ BM25 ranks 3,633 docs → returns top-100
+    ├─ Dense searches 3,633 docs → returns top-100
+    └─ Hybrid combines both rankings
+
+Step 5: Evaluation
+    For each query:
+    ├─ Retrieved docs: [doc1, doc2, ..., doc100]
+    ├─ Ground truth (qrels): {correct_doc1: 2, correct_doc2: 1, ...}
+    ├─ Compare: Calculate NDCG@10, Recall@100, etc.
+    └─ Judge retrieval quality
+
+Step 6: Results
+    Compare BM25 vs Dense vs Hybrid performance
+    Which method retrieves the most relevant documents?
+\end{lstlisting}
+
+\subsection{ Key Insights}
+
+\subsubsection{Why Corpus Matters}
+
+\begin{itemize}
+  \item \textbf{Size}: 3,633 documents = realistic corpus (not too small, not too huge)
+  \item \textbf{Quality}: PubMed papers = high quality, expert content
+  \item \textbf{Domain}: Medical/nutrition = specialized vocabulary challenges both BM25 and Dense
+  \item \textbf{Diversity}: Mix of cancer, diabetes, nutrition, pharmacology
+\end{itemize}
+
+\subsubsection{Why Queries Matter}
+
+\begin{itemize}
+  \item \textbf{Realism}: Come from actual health website searches
+  \item \textbf{Variety}: Mix of keyword and natural language
+  \item \textbf{Specificity}: Require understanding domain knowledge
+  \item \textbf{Challenge}: Need to find relevant docs despite lexical/semantic mismatches
+\end{itemize}
+
+\subsubsection{Why Their Relationship Matters}
+
+\begin{itemize}
+  \item \textbf{Lexical gap}: Query words ≠ Document words
+  \item \textbf{Semantic gap}: Query meaning ≠ Document focus
+  \item \textbf{Scale}: 3,633 → 50 = 72x reduction in documents per query
+  \item \textbf{Difficulty}: Average 38 relevant docs per query = high recall needed
+\end{itemize}
+
+\subsection{ Files in Your Project}
+
+\begin{lstlisting}
+data/beir_datasets/nfcorpus/
+├── corpus.jsonl           ← All 3,633 documents
+├── queries.jsonl          ← All 3,237 queries
+└── qrels/
+    ├── dev.tsv
+    ├── test.tsv          ← Ground truth for evaluation
+    └── train.tsv
+
+Usage in code:
+    corpus, queries, qrels = loader.load_dataset('nfcorpus')
+    ├─ corpus: Used to build indexes (BM25, Dense)
+    └─ queries: Used to test retrieval methods
+\end{lstlisting}
+
+\subsection{ Understanding Through Analogy}
+
+\subsubsection{Google Search Analogy}
+
+\begin{lstlisting}
+Corpus = All websites on the internet
+├─ 3,633 medical papers (= Wikipedia medical section)
+├─ High quality, peer-reviewed content
+└─ Indexed in BM25 + Dense search engines
+
+Queries = What users search
+├─ 3,237 health-related search queries
+├─ "Breast cancer and cholesterol"
+├─ "How to treat asthma with diet"
+└─ "Is ginger good for nausea?"
+
+Retrieval Task:
+"Given a query, find the top-100 most relevant documents from the corpus"
+
+Perfect if:
+✅ Retrieve medical papers about cancer and cholesterol for first query
+✅ Retrieve papers about asthma treatments for second query
+✅ Retrieve papers about ginger effectiveness for third query
+\end{lstlisting}
+
+\subsubsection{Library Analogy}
+
+\begin{lstlisting}
+Librarian System = Your Retrieval Methods (BM25, Dense, Hybrid)
+
+Corpus = Library with 3,633 books
+├─ 1,500+ about cancer/diseases
+├─ 1,000+ about nutrition/diet
+└─ 1,100+ about pharmacology/drugs
+
+Queries = Questions from library users
+├─ "Give me books about cancer treatment"
+├─ "Show me nutrition research"
+└─ "Find papers on drug interactions"
+
+BM25 Librarian = Keyword matching librarian
+├─ Looks for exact keywords: "cancer", "treatment"
+├─ Fast, reliable for exact terms
+└─ Misses synonyms: "tumor" (not "cancer"), "therapy" (not "treatment")
+
+Dense Librarian = Semantic understanding librarian
+├─ Understands meaning: "cancer" ≈ "tumor", "treat" ≈ "therapy"
+├─ Smarter at finding related books
+└─ Slower but catches synonyms
+
+Hybrid Librarian = Combination
+├─ Uses both keyword + semantic matching
+└─ Usually the best overall
+\end{lstlisting}
+
+\textbf{Bottom Line:}
+
+\begin{itemize}
+  \item \textbf{Corpus} = The books in the library (search target)
+  \item \textbf{Queries} = The questions from users (search input)
+  \item \textbf{Your task} = Find which retrieval method best matches queries to corpus documents
+\end{itemize}

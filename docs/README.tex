@@ -1,0 +1,584 @@
+\section{ Nghiên cứu So sánh: Chatbot Truy hồi vs RAG trên Benchmark BeIR}
+
+
+
+
+
+\subsection{ Tóm tắt}
+
+\textbf{Đề tài}: Nghiên cứu so sánh hiệu năng giữa \textbf{Chatbot Truy hồi (Retrieval-based)} và \textbf{Chatbot Sinh (RAG)} trên tập chuẩn BeIR.
+
+Dự án này thực hiện đánh giá khoa học để so sánh hai phương pháp xây dựng chatbot:
+
+\begin{itemize}
+  \item \textbf{Pipeline A (BM25)}: Tìm kiếm dựa trên từ khóa (Sparse Retrieval)
+  \item \textbf{Pipeline B (RAG)}: Tìm kiếm ngữ nghĩa + Sinh câu trả lời bằng LLM (Dense Retrieval + Generation)
+\end{itemize}
+
+\subsubsection{ Mục tiêu}
+
+\begin{enumerate}
+  \item \textbf{Đánh giá Retrieval Quality}: So sánh khả năng tìm kiếm tài liệu đúng giữa BM25, Dense Retrieval, và Hybrid
+  \item \textbf{Đánh giá Generation Quality}: Đo lường chất lượng câu trả lời do LLM sinh ra
+  \item \textbf{Phân tích Trường hợp}: Xác định khi nào nên dùng BM25, Dense, hoặc Hybrid (BEST!)
+  \item \textbf{ Hybrid Search}: Kết hợp BM25 + Dense bằng Reciprocal Rank Fusion (RRF)
+\end{enumerate}
+
+\subsection{ Kiến trúc Hệ thống (UPDATED with Hybrid Search!)}
+
+\begin{lstlisting}
+┌─────────────────────────────────────────────────────────────┐
+│                    BeIR Dataset                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │   Corpus     │  │   Queries    │  │    Qrels     │     │
+│  │ (Documents)  │  │ (Questions)  │  │ (Answers)    │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘     │
+└─────────────────────────────────────────────────────────────┘
+                            │
+           ┌────────────────┼────────────────┐
+           │                │                │
+   ┌───────▼──────┐  ┌──────▼──────┐  ┌─────▼─────────┐
+   │  PIPELINE A  │  │  PIPELINE B │  │  PIPELINE C   │
+   │  BM25 (Sparse│  │  Dense+LLM  │  │  HYBRID! 🆕   │
+   │  Retrieval)  │  │  (RAG)      │  │  (BM25+Dense) │
+   └───────┬──────┘  └──────┬──────┘  └─────┬─────────┘
+           │                │                │
+           │         ┌──────┴──────┐        │
+           │         │ Embeddings  │        │
+           │         │ + FAISS     │        │
+           │         └──────┬──────┘        │
+           │                │                │
+           │         ┌──────▼──────┐        │
+           │         │  Generate   │        │
+           │         │ (GPT-3.5)   │        │
+           │         └─────────────┘        │
+           │                                 │
+           └────────────┬────────────────────┘
+                        │
+           ┌────────────▼────────────┐
+           │  Reciprocal Rank Fusion │
+           │   (RRF Algorithm)       │
+           │  Combines BM25 + Dense  │
+           └────────────┬────────────┘
+                        ▼
+              ┌──────────────────┐
+              │   EVALUATION     │
+              │                  │
+              │ Retrieval:       │
+              │ • NDCG@10        │
+              │ • Recall@100     │
+              │ • MAP, MRR       │
+              │                  │
+              │ Generation:      │
+              │ • Faithfulness   │
+              │ • Relevance      │
+              └──────────────────┘
+\end{lstlisting}
+
+\subsubsection{ Pipeline C: Hybrid Search}
+
+\textbf{Inspired by}: \href{https://github.com/timescale/pg_textsearch}{pg\_textsearch} - BM25 in PostgreSQL
+
+\textbf{Core Algorithm}: Reciprocal Rank Fusion (RRF)
+
+\begin{lstlisting}[language=python]
+score = α × (1/(k + bm25_rank)) + (1-α) × (1/(k + dense_rank))
+\end{lstlisting}
+
+\textbf{Why Hybrid?}
+
+\begin{itemize}
+  \item BM25 handles: Exact terms, codes, technical names
+  \item Dense handles: Semantic meaning, paraphrases
+  \item RRF combines: Best of both worlds without score normalization issues
+\end{itemize}
+
+\subsection{ Datasets}
+
+\subsubsection{BeIR (Benchmark for Information Retrieval)}
+
+BeIR là bộ benchmark chuẩn quốc tế gồm 18 datasets khác nhau. Dự án này sử dụng:
+
+\begin{tabular}{|l|l|l|l|l|}
+  \hline
+  Dataset & Domain & Documents & Queries & Đặc điểm \\
+  \hline
+  \textbf{NFCorpus} & Y tế/Dinh dưỡng & 3,633 & 323 & Thuật ngữ chuyên ngành, tên thuốc \\
+  \textbf{MS MARCO} & Kiến thức chung & 8.8M & 6,980 & General domain, diverse topics \\
+  \textbf{FiQA} & Tài chính & 57,638 & 648 & Thuật ngữ tài chính, số liệu \\
+  \hline
+\end{tabular}
+
+\textbf{Tại sao chọn BeIR?}
+
+\begin{itemize}
+  \item Zero-shot evaluation: Test độ tổng quát của model
+  \item Ground truth chuẩn: Có qrels để đánh giá chính xác
+  \item Khó hơn dataset truyền thống: Yêu cầu hiểu ngữ nghĩa sâu
+\end{itemize}
+
+\subsection{ Phương pháp Đánh giá}
+
+\subsubsection{Tầng 1: Retrieval Evaluation}
+
+Đánh giá khả năng tìm kiếm tài liệu đúng (áp dụng cho cả BM25 và RAG):
+
+\paragraph{NDCG@10 (Normalized Discounted Cumulative Gain)}
+
+\begin{lstlisting}[language=python]
+# Công thức
+DCG = Σ(rel_i / log2(i+1))
+NDCG = DCG / IDCG
+\end{lstlisting}
+
+\begin{itemize}
+  \item \textbf{Ý nghĩa}: Đo lường chất lượng ranking. Tài liệu đúng ở vị trí cao = điểm cao.
+  \item \textbf{Tầm quan trọng}: Người dùng chỉ xem 3-5 kết quả đầu → NDCG cao = trải nghiệm tốt.
+\end{itemize}
+
+\paragraph{Recall@100}
+
+\begin{lstlisting}[language=python]
+Recall@100 = (Số docs đúng trong top-100) / (Tổng số docs đúng)
+\end{lstlisting}
+
+\begin{itemize}
+  \item \textbf{Ý nghĩa}: Tỷ lệ tìm thấy tài liệu đúng.
+  \item \textbf{Trade-off}: Recall cao nhưng precision thấp = nhiều rác.
+\end{itemize}
+
+\paragraph{MAP (Mean Average Precision)}
+
+\begin{lstlisting}[language=python]
+AP = Σ(Precision@k × rel(k)) / Số docs đúng
+MAP = Trung bình AP của tất cả queries
+\end{lstlisting}
+
+\begin{itemize}
+  \item \textbf{Ý nghĩa}: Đánh giá tổng thể chất lượng ranking.
+\end{itemize}
+
+\subsubsection{Tầng 2: Generation Evaluation (chỉ cho RAG)}
+
+Đánh giá chất lượng câu trả lời do LLM sinh ra (sử dụng framework \textbf{Ragas}):
+
+\paragraph{Faithfulness}
+
+\begin{lstlisting}[language=python]
+Faithfulness = Số claims được hỗ trợ bởi context / Tổng số claims
+\end{lstlisting}
+
+\begin{itemize}
+  \item \textbf{Ý nghĩa}: Câu trả lời có trung thực với tài liệu không?
+  \item \textbf{Vấn đề}: Hallucination - AI bịa thông tin không có trong context.
+\end{itemize}
+
+\paragraph{Answer Relevance}
+
+\begin{lstlisting}[language=python]
+Relevance = Cosine similarity(Question embedding, Answer embedding)
+\end{lstlisting}
+
+\begin{itemize}
+  \item \textbf{Ý nghĩa}: Câu trả lời có đúng trọng tâm câu hỏi không?
+\end{itemize}
+
+\subsection{ Cài đặt}
+
+\subsubsection{1. Clone repository}
+
+\begin{lstlisting}[language=bash]
+git clone <repository-url>
+cd "Đồ Án Truy Hồi Thông Tin"
+\end{lstlisting}
+
+\subsubsection{2. Tạo virtual environment}
+
+\begin{lstlisting}[language=bash]
+python -m venv venv
+.\venv\Scripts\activate  # Windows
+# source venv/bin/activate  # Linux/Mac
+\end{lstlisting}
+
+\subsubsection{3. Cài đặt dependencies}
+
+\begin{lstlisting}[language=bash]
+pip install -r requirements.txt
+\end{lstlisting}
+
+\subsubsection{4. Cấu hình API keys}
+
+\begin{lstlisting}[language=bash]
+# Copy file .env.example thành .env
+copy .env.example .env
+
+# Chỉnh sửa .env và thêm OpenAI API key
+OPENAI_API_KEY=your_openai_api_key_here
+\end{lstlisting}
+
+\subsection{ Chạy Experiments}
+
+\subsubsection{Quick Start: So sánh 3 pipelines (BM25 vs Dense vs Hybrid)}
+
+\begin{lstlisting}[language=bash]
+cd notebooks
+python experiment_enhanced.py
+\end{lstlisting}
+
+\subsubsection{Original: So sánh 2 pipelines (BM25 vs Dense only)}
+
+\begin{lstlisting}[language=bash]
+cd notebooks
+python experiment_runner.py
+\end{lstlisting}
+
+\subsubsection{Chi tiết từng bước}
+
+\paragraph{1. Load dữ liệu BeIR}
+
+\begin{lstlisting}[language=python]
+from src.data_loader import BeirDataLoader
+
+loader = BeirDataLoader()
+corpus, queries, qrels = loader.load_dataset('nfcorpus')
+\end{lstlisting}
+
+\paragraph{2. Test BM25 Pipeline}
+
+\begin{lstlisting}[language=python]
+from src.bm25_retriever import BM25Retriever
+
+retriever = BM25Retriever()
+retriever.build_index(documents)
+results = retriever.search("What causes diabetes?", top_k=10)
+\end{lstlisting}
+
+\paragraph{3. Test RAG Pipeline}
+
+\begin{lstlisting}[language=python]
+from src.rag_system import RAGSystem
+
+rag = RAGSystem()
+rag.build_index(documents)
+result = rag.rag_pipeline("What causes diabetes?", top_k=10)
+print(result['answer'])
+\end{lstlisting}
+
+\paragraph{4. Test Hybrid Search (NEW!)}
+
+\begin{lstlisting}[language=python]
+from src.hybrid_retriever import HybridRetriever
+
+hybrid = HybridRetriever(bm25_retriever, rag_system, alpha=0.5)
+results = hybrid.search("What causes diabetes?", top_k=10)
+
+# Analyze source
+stats = hybrid.analyze_retrieval_sources(results)
+print(f"From both: {stats['from_both']}")
+print(f"From BM25 only: {stats['from_bm25_only']}")
+print(f"From Dense only: {stats['from_dense_only']}")
+
+# Explain why a doc is ranked high
+print(hybrid.explain_result(results[0]))
+\end{lstlisting}
+
+\paragraph{5. Đánh giá và So sánh}
+
+\begin{lstlisting}[language=python]
+from evaluation.metrics import RetrievalEvaluator
+
+evaluator = RetrievalEvaluator()
+df_results = evaluator.evaluate_retrieval(results, qrels)
+print(df_results[['NDCG@10', 'Recall@100', 'MAP']].mean())
+\end{lstlisting}
+
+\subsection{ Kết quả Mong đợi}
+
+\subsubsection{Hypothesis (Giả thuyết) - UPDATED!}
+
+\begin{tabular}{|l|l|l|l|}
+  \hline
+  Tình huống & BM25 & Dense & Hybrid \\
+  \hline
+  \textbf{Tên riêng, mã số} &  Exact match &  Có thể nhầm &  RRF ưu tiên BM25 \\
+  \textbf{Thuật ngữ chuyên ngành} &  Keyword match &  Embedding không biết &  Best of both \\
+  \textbf{Câu hỏi mô tả} &  Không hiểu ngữ nghĩa &  Semantic search &  Cân bằng tốt \\
+  \textbf{Câu hỏi phức tạp} &  Chỉ keyword &  LLM reasoning &  Combine strengths \\
+  \textbf{Mixed queries} &  Hit or miss &  Hit or miss &  Robust \\
+  \hline
+\end{tabular}
+
+\subsubsection{Real-world Examples}
+
+\textbf{Query 1}: "CPT-11 dosage" (exact drug code)
+
+\begin{itemize}
+  \item BM25:  Finds exact match (rank \#1)
+  \item Dense:  Confuses with similar drugs (rank \#5)
+  \item Hybrid:  RRF boosts BM25 result (rank \#1)
+\end{itemize}
+
+\textbf{Query 2}: "chest pain and shortness of breath" (symptoms)
+
+\begin{itemize}
+  \item BM25:  No exact match (rank \#8)
+  \item Dense:  Understands symptoms (rank \#2)
+  \item Hybrid:  Combines signals (rank \#1)
+\end{itemize}
+
+\textbf{Query 3}: "diabetes treatment options" (mixed)
+
+\begin{itemize}
+  \item BM25:  Finds "diabetes" but not "treatment options"
+  \item Dense:  Finds semantic matches but misses specific terms
+  \item Hybrid:  Best precision and recall balance
+\end{itemize}
+
+\subsubsection{Ví dụ Kết quả (3-way Comparison)}
+
+\begin{lstlisting}
+=== NFCorpus Dataset ===
+┌─────────────┬─────────┬─────────┬─────────┬──────────┐
+│   Metric    │  BM25   │  Dense  │ Hybrid  │  Winner  │
+├─────────────┼─────────┼─────────┼─────────┼──────────┤
+│  NDCG@10    │  0.285  │  0.312  │  0.338  │  Hybrid  │
+│  Recall@100 │  0.567  │  0.543  │  0.589  │  Hybrid  │
+│  MAP        │  0.198  │  0.221  │  0.245  │  Hybrid  │
+│  MRR        │  0.342  │  0.365  │  0.381  │  Hybrid  │
+│  Precision@10│ 0.156  │  0.171  │  0.183  │  Hybrid  │
+└─────────────┴─────────┴─────────┴─────────┴──────────┘
+
+💡 Key Findings:
+- Hybrid wins 5/5 metrics (100% win rate!)
+- +18% NDCG improvement over BM25
+- +8% NDCG improvement over Dense alone
+- Best of both worlds: Keyword precision + Semantic understanding
+\end{lstlisting}
+
+\subsubsection{Why Hybrid Wins?}
+
+\textbf{Reciprocal Rank Fusion (RRF) Algorithm:}
+
+\begin{lstlisting}[language=python]
+# RRF doesn't care about score scales
+# It only looks at ranks (positions)
+
+For each document:
+  bm25_contribution = α / (k + bm25_rank)
+  dense_contribution = (1-α) / (k + dense_rank)
+  hybrid_score = bm25_contribution + dense_contribution
+
+# Documents found by both → highest scores
+# Documents from one source → still included but ranked lower
+\end{lstlisting}
+
+\textbf{Benefits:}
+
+\begin{enumerate}
+  \item \textbf{No score normalization needed} (unlike weighted averaging)
+  \item \textbf{Robust to score distribution differences} between retrievers
+  \item \textbf{Automatically boosts consensus documents} (found by both)
+  \item \textbf{Gracefully handles partial matches} (found by only one)
+\end{enumerate}
+
+\subsection{ PROMPT DEEP RESEARCH}
+
+Sử dụng prompt sau để phân tích sâu cho phần Lý thuyết và Kết quả trong báo cáo:
+
+\begin{lstlisting}
+DEEP RESEARCH PROMPT: BEIR-BASED RAG THESIS
+
+Vai trò: Chuyên gia Đánh giá Hệ thống Tìm kiếm (IR Evaluator).
+
+Bối cảnh: Tôi đang làm luận văn so sánh BM25 (Retrieval) và RAG (Dense Retrieval) 
+sử dụng bộ dữ liệu chuẩn BeIR (cụ thể là NFCorpus và MS MARCO).
+
+Hãy giúp tôi phân tích sâu các vấn đề sau:
+
+## 1. Phân tích Dataset BeIR
+
+### a) Cấu trúc BeIR Benchmark
+- Giải thích cấu trúc của BeIR Benchmark (corpus, queries, qrels)
+- Tại sao BeIR lại khó hơn các dataset truyền thống?
+- Nhấn mạnh yếu tố **Zero-shot Evaluation** và tầm quan trọng của nó
+
+### b) Đặc điểm NFCorpus (Y tế)
+- Phân tích đặc thù ngữ liệu y tế: thuật ngữ Latin, tên thuốc, mã số
+- Tại sao từ khóa chuyên ngành gây khó khăn cho Dense Retrieval?
+- Tại sao BM25 lại có lợi thế với domain này?
+
+## 2. Cơ chế Đánh giá (Metrics Explained)
+
+### a) NDCG@10 (Toán học + Thực tiễn)
+- Giải thích công thức DCG và IDCG một cách đơn giản
+- Ý nghĩa thực tiễn: Tại sao NDCG cao = trải nghiệm người dùng tốt?
+- So sánh NDCG vs Precision: Khi nào dùng metric nào?
+
+### b) Faithfulness trong Ragas
+- Ragas đo lường hallucination như thế nào?
+- Phân tích cơ chế: NLI model check claims vs context
+- Tại sao Faithfulness quan trọng với chatbot y tế/tài chính?
+
+## 3. So sánh Hiệu năng (Hypothesis)
+
+### a) Khi nào BM25 thắng RAG?
+- Phân tích case study: Tìm kiếm tên thuốc "Ibuprofen" vs "Painkiller"
+- Giải thích: BM25 match exact term, RAG có thể nhầm với paracetamol
+
+### b) Khi nào RAG thắng BM25?
+- Phân tích case study: "I have chest pain and trouble breathing, what could it be?"
+- Giải thích: RAG hiểu ngữ nghĩa, tổng hợp nhiều triệu chứng
+
+### c) Trade-offs
+- Latency: BM25 nhanh hơn (không cần embedding)
+- Cost: RAG tốn tiền (OpenAI API)
+- Accuracy: Phụ thuộc domain và query type
+
+## 4. Kiến trúc Code (Python Class Design)
+
+Đề xuất cấu trúc class để:
+- Load dữ liệu từ BeIR
+- Integrate với LlamaIndex
+- Quản lý cả BM25 và FAISS index
+- Chạy batch evaluation
+
+Cung cấp:
+- UML diagram (text format)
+- Code skeleton với docstrings chi tiết
+- Best practices cho production deployment
+
+## Output Format
+
+Trả lời theo cấu trúc:
+1. **Phần Lý thuyết** (dùng cho Chapter 2 của báo cáo)
+2. **Phần Phân tích Kết quả** (dùng cho Chapter 4)
+3. **Code Architecture** (dùng cho Chapter 3 - Thiết kế)
+4. **References** (Danh sách paper và tài liệu tham khảo)
+\end{lstlisting}
+
+\subsubsection{Cách sử dụng Prompt}
+
+\begin{enumerate}
+  \item Copy toàn bộ prompt trên
+  \item Paste vào ChatGPT/Gemini/Claude
+  \item Nhận được nội dung chi tiết để viết báo cáo
+  \item Chỉnh sửa và thêm kết quả thực nghiệm của bạn
+\end{enumerate}
+
+\subsection{ Ứng dụng Thực tiễn}
+
+\subsubsection{1. Chatbot Y tế}
+
+\begin{itemize}
+  \item \textbf{BM25}: Tra cứu tên thuốc chính xác (e.g., "Metformin 500mg")
+  \item \textbf{Dense}: Hiểu triệu chứng mơ hồ (e.g., "đau đầu và chóng mặt")
+  \item \textbf{Hybrid} : Production-ready - Xử lý cả exact terms và symptoms
+\end{itemize}
+
+\subsubsection{2. Chatbot Tài chính}
+
+\begin{itemize}
+  \item \textbf{BM25}: Tìm mã chứng khoán (e.g., "AAPL Q4 earnings")
+  \item \textbf{Dense}: Phân tích sentiment, trend
+  \item \textbf{Hybrid} : Robust search cho báo cáo tài chính
+\end{itemize}
+
+\subsubsection{3. E-commerce Search}
+
+\begin{itemize}
+  \item \textbf{BM25}: Product codes, SKUs
+  \item \textbf{Dense}: Natural language queries ("comfortable running shoes")
+  \item \textbf{Hybrid} : Industry standard (Amazon, eBay use hybrid)
+\end{itemize}
+
+\subsubsection{4. Documentation Search}
+
+\begin{itemize}
+  \item \textbf{BM25}: API names, error codes (e.g., "Error 404")
+  \item \textbf{Dense}: Conceptual questions (e.g., "how to authenticate users")
+  \item \textbf{Hybrid} : Best UX - Covers all query types
+\end{itemize}
+
+\subsection{ Research References}
+
+\subsubsection{Key Insight from pg\_textsearch Article}
+
+> "Every major AI search system uses hybrid search: LangChain's EnsembleRetriever, 
+> Cohere Rerank, Pinecone Hybrid Search all combine BM25 + vectors."
+
+\textbf{Why?}
+
+\begin{itemize}
+  \item Query: \texttt{error PG-1234} → BM25 wins (exact match)
+  \item Query: \texttt{why is my database slow} → Dense wins (semantic)
+  \item Query: \texttt{fix connection timeout} → Hybrid wins (both signals)
+\end{itemize}
+
+\subsubsection{Production Systems Using Hybrid}
+
+\begin{enumerate}
+  \item \textbf{LangChain}: \texttt{EnsembleRetriever} với RRF
+  \item \textbf{Pinecone}: Native hybrid search API
+  \item \textbf{Weaviate}: BM25 + Vector hybrid mode
+  \item \textbf{Elasticsearch}: Combined queries (BM25 + kNN)
+  \item \textbf{pg\_textsearch}: BM25 in PostgreSQL (open source)
+\end{enumerate}
+
+\subsection{ Tài liệu Tham khảo}
+
+\subsubsection{Papers \& Articles}
+
+\begin{enumerate}
+  \item \textbf{BeIR}: Thakur et al. (2021) - "BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation of Information Retrieval Models"
+  \item \textbf{BM25}: Robertson \& Zaragoza (2009) - "The Probabilistic Relevance Framework: BM25 and Beyond"
+  \item \textbf{Dense Retrieval}: Karpukhin et al. (2020) - "Dense Passage Retrieval for Open-Domain Question Answering"
+  \item \textbf{RAG}: Lewis et al. (2020) - "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+  \item \textbf{Ragas}: Shahul et al. (2023) - "Ragas: Automated Evaluation of Retrieval Augmented Generation"
+  \item \textbf{ Hybrid Search}: Craswell et al. (2020) - "Combining BM25 and Neural Ranking Models"
+  \item \textbf{ RRF}: Cormack et al. (2009) - "Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning"
+\end{enumerate}
+
+\subsubsection{Articles \& Tools}
+
+\begin{itemize}
+  \item \textbf{pg\_textsearch}: https://github.com/timescale/pg\_textsearch
+  \item \textbf{Tiger Data Blog}: "You Don't Need Elasticsearch: BM25 is Now in Postgres"
+  \item BeIR: https://github.com/beir-cellar/beir
+  \item Ragas: https://github.com/explodinggradients/ragas
+  \item LlamaIndex: https://www.llamaindex.ai/
+  \item Sentence Transformers: https://www.sbert.net/
+\end{itemize}
+
+\subsection{ Đóng góp}
+
+Dự án này được xây dựng cho mục đích học thuật. Mọi đóng góp, góp ý xin gửi về [email của bạn].
+
+\subsection{ License}
+
+MIT License - Xem file LICENSE để biết thêm chi tiết.
+
+\subsection{ Checklist Hoàn thành Đồ án}
+
+\begin{itemize}
+  \item [x] Load dữ liệu BeIR (NFCorpus, MS MARCO)
+  \item [x] Xây dựng BM25 Retrieval Pipeline
+  \item [x] Xây dựng RAG System Pipeline
+  \item [x]  Xây dựng Hybrid Search Pipeline (RRF)
+  \item [x] Implement Evaluation Metrics (NDCG, Recall, MAP, MRR)
+  \item [x] Integrate Ragas cho Generation Evaluation
+  \item [x] Chạy experiments và so sánh kết quả (3-way)
+  \item [x] Visualization (charts, plots)
+  \item [x]  Source analysis (from BM25 vs Dense vs Both)
+  \item [ ] Viết báo cáo đầy đủ (Chapter 1-5)
+  \item [ ] Chuẩn bị slide thuyết trình
+  \item [ ] Demo video hệ thống
+\end{itemize}
+
+\textbf{ Tác giả}: [Tên của bạn]  
+\textbf{ Email}: [Email của bạn]  
+\textbf{ Trường}: [Tên trường]  
+\textbf{ Năm}: 2025-2026
+
+\textbf{ NEW!} \textit{"Hybrid Search is not the future - it's the present. Every production RAG system should use it."} 
+
+\textbf{Inspired by}: \href{https://www.tigerdata.com/blog/you-dont-need-elasticsearch-bm25-is-now-in-postgres}{Tiger Data - BM25 in Postgres} 

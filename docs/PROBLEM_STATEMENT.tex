@@ -1,0 +1,588 @@
+\section{Problem Statement: Comparative Evaluation of Retrieval Methods on BeIR Benchmark}
+
+\subsection{1. Research Background and Motivation}
+
+\subsubsection{1.1 The Evolution of Information Retrieval}
+
+Information Retrieval (IR) has undergone significant transformation over the past decades. Traditional approaches relied heavily on sparse retrieval methods such as BM25 (Best Match 25), which ranks documents based on term frequency statistics and has remained a robust baseline since its introduction by Robertson and Zaragoza in 2009 [1]. Despite its age, BM25 continues to demonstrate competitive performance across diverse retrieval tasks due to its effectiveness in capturing lexical matching signals.
+
+In recent years, the emergence of deep learning and neural network architectures has introduced \textbf{dense retrieval} methods that represent queries and documents as continuous vector embeddings in a shared semantic space [2, 3]. Unlike sparse methods that rely on exact term matching, dense retrievers leverage pre-trained language models to capture semantic similarity, enabling them to match documents even when there is minimal lexical overlap with the query.
+
+\subsubsection{1.2 The Challenge of Zero-Shot Retrieval}
+
+A critical challenge in modern information retrieval is \textbf{zero-shot generalization} — the ability of retrieval models to perform well on new domains and tasks without additional fine-tuning. Thakur et al. (2021) demonstrated through the BeIR benchmark that while dense retrieval models achieve impressive results on their training domains, they often underperform compared to BM25 when evaluated in zero-shot settings across heterogeneous datasets [4]. This finding highlights a fundamental limitation: dense models may overfit to the characteristics of their training data and fail to generalize to diverse information needs.
+
+\subsubsection{1.3 The Rise of Retrieval-Augmented Generation}
+
+Simultaneously, the field has witnessed the emergence of \textbf{Retrieval-Augmented Generation (RAG)} systems, which combine retrieval mechanisms with generative language models to produce contextually grounded responses [5]. RAG systems first retrieve relevant documents using IR techniques, then use these documents as context for a large language model (LLM) to generate coherent and factually accurate answers. This paradigm has gained significant traction in applications such as question-answering, conversational AI, and knowledge-intensive tasks.
+
+The retrieval component in RAG systems is critical — poor retrieval quality directly impacts generation quality, leading to hallucinations or irrelevant responses. Therefore, understanding the comparative strengths and weaknesses of different retrieval methods becomes essential for optimizing RAG performance.
+
+\subsubsection{1.4 The Gap in Systematic Comparison}
+
+Despite extensive research on individual retrieval methods, there remains a need for systematic empirical comparisons that:
+
+\begin{enumerate}
+  \item \textbf{Evaluate multiple retrieval paradigms} (sparse, dense, hybrid) under consistent experimental conditions
+  \item \textbf{Use standardized benchmarks} that represent realistic information retrieval challenges
+  \item \textbf{Provide implementation-level insights} beyond theoretical comparisons
+  \item \textbf{Consider practical deployment factors} such as indexing speed, query latency, and storage requirements
+\end{enumerate}
+
+This research addresses these gaps by conducting a comprehensive comparison of BM25 (sparse), dense semantic search, and hybrid retrieval methods using the BeIR benchmark framework.
+
+\subsection{2. Problem Definition}
+
+\subsubsection{2.1 Core Research Question}
+
+\textbf{How do different retrieval approaches (BM25, dense retrieval, and hybrid methods) compare in their effectiveness for zero-shot document retrieval tasks, and what are the implications for RAG system design?}
+
+\subsubsection{2.2 Specific Research Objectives}
+
+\begin{enumerate}
+  \item \textbf{Benchmark Performance Comparison}: Quantitatively evaluate BM25, dense (semantic), and hybrid retrieval methods on the NFCorpus dataset from BeIR using standard IR metrics (NDCG@10, Recall@100, MAP, MRR)
+\end{enumerate}
+
+\begin{enumerate}
+  \item \textbf{Retrieval Pattern Analysis}: Analyze the types of queries and documents where each method excels or fails, identifying complementary strengths
+\end{enumerate}
+
+\begin{enumerate}
+  \item \textbf{Hybrid Strategy Evaluation}: Assess the effectiveness of Reciprocal Rank Fusion (RRF) for combining sparse and dense signals
+\end{enumerate}
+
+\begin{enumerate}
+  \item \textbf{RAG System Implications}: Understand how retrieval method choice impacts the quality of generated responses in RAG pipelines
+\end{enumerate}
+
+\begin{enumerate}
+  \item \textbf{Practical Implementation Insights}: Document implementation considerations, performance characteristics, and operational trade-offs
+\end{enumerate}
+
+\subsubsection{2.3 Scope and Constraints}
+
+\textbf{Dataset}: NFCorpus (Nutrition Facts Corpus) from the BeIR benchmark
+
+\begin{itemize}
+  \item 3,633 medical/nutritional documents
+  \item 323 test queries
+  \item 12,334 relevance judgments
+  \item Domain: Medical and nutritional information
+  \item Task: Zero-shot retrieval (no domain-specific fine-tuning)
+\end{itemize}
+
+\textbf{Retrieval Methods}:
+
+\begin{itemize}
+  \item \textbf{BM25}: Classic probabilistic sparse retrieval with LlamaIndex BM25Retriever
+  \item \textbf{Dense Retrieval}: Semantic search using sentence-transformers embeddings (all-MiniLM-L6-v2) stored in PostgreSQL with pgvector
+  \item \textbf{Hybrid Retrieval}: Reciprocal Rank Fusion (RRF) combining BM25 and dense scores
+\end{itemize}
+
+\textbf{Evaluation Metrics}:
+
+\begin{itemize}
+  \item Normalized Discounted Cumulative Gain at 10 (NDCG@10)
+  \item Recall at 100 (Recall@100)
+  \item Mean Average Precision (MAP)
+  \item Mean Reciprocal Rank (MRR)
+\end{itemize}
+
+\textbf{Technology Stack}:
+
+\begin{itemize}
+  \item LlamaIndex v0.10+ for unified retrieval framework
+  \item PostgreSQL 16 with pgvector extension for vector storage
+  \item sentence-transformers for embedding generation
+  \item BeIR evaluation framework for metric computation
+\end{itemize}
+
+\subsection{3. Retrieval Methods: Technical Overview}
+
+\subsubsection{3.1 BM25 (Sparse Retrieval)}
+
+\textbf{Algorithm}: BM25 (Best Match 25) is a probabilistic ranking function based on the binary independence model [1]. The score for document \textit{D} given query \textit{Q} is:
+
+\[
+\text{score}(D,Q) = \sum_{i=1}^{n} \text{IDF}(q_i) \cdot \frac{f(q_i, D) \cdot (k_1 + 1)}{f(q_i, D) + k_1 \cdot (1 - b + b \cdot \frac{|D|}{\text{avgdl}})}
+\]
+
+Where:
+
+\begin{itemize}
+  \item $f(q_i, D)$ = frequency of term $q_i$ in document $D$
+  \item $|D|$ = length of document $D$ (number of terms)
+  \item $\text{avgdl}$ = average document length in the collection
+  \item $k_1$ = term frequency saturation parameter (typically 1.2-2.0)
+  \item $b$ = length normalization parameter (typically 0.75)
+  \item $\text{IDF}(q_i)$ = inverse document frequency of term $q_i$
+\end{itemize}
+
+\textbf{Strengths}:
+
+\begin{itemize}
+  \item Excellent performance on keyword-centric queries
+  \item No training required, deterministic results
+  \item Computationally efficient for indexing and querying
+  \item Strong zero-shot generalization [4]
+\end{itemize}
+
+\textbf{Weaknesses}:
+
+\begin{itemize}
+  \item Limited semantic understanding (synonyms, paraphrasing)
+  \item Vocabulary mismatch problem
+  \item Cannot capture word order or context
+\end{itemize}
+
+\textbf{Implementation}:
+
+\begin{itemize}
+  \item LlamaIndex BM25Retriever with bm25s backend
+  \item Stemming with Pystemmer for term normalization
+  \item Node-based indexing for flexible chunking
+\end{itemize}
+
+\subsubsection{3.2 Dense Retrieval (Semantic Search)}
+
+\textbf{Algorithm}: Dense retrieval methods encode queries and documents into dense vectors in a shared embedding space, then use vector similarity for ranking [2, 3]. The typical pipeline:
+
+\begin{enumerate}
+  \item \textbf{Encoding}: $\mathbf{v}_q = f_{\theta}(q)$, $\mathbf{v}_d = f_{\theta}(d)$ where $f_{\theta}$ is a neural encoder
+  \item \textbf{Similarity}: $\text{score}(d,q) = \cos(\mathbf{v}_q, \mathbf{v}_d) = \frac{\mathbf{v}_q \cdot \mathbf{v}_d}{\|\mathbf{v}_q\| \|\mathbf{v}_d\|}$
+  \item \textbf{Retrieval}: Approximate nearest neighbor (ANN) search to find top-k most similar documents
+\end{enumerate}
+
+\textbf{Embedding Model}: sentence-transformers/all-MiniLM-L6-v2
+
+\begin{itemize}
+  \item Architecture: 6-layer MiniLM model fine-tuned with contrastive learning
+  \item Dimensions: 384
+  \item Training: Multi-task training on 1B+ sentence pairs
+  \item Semantic capabilities: Captures paraphrase similarity, contextual meaning
+\end{itemize}
+
+\textbf{Strengths}:
+
+\begin{itemize}
+  \item Strong semantic matching (handles synonyms, paraphrasing)
+  \item Captures contextual meaning and intent
+  \item Effective for conceptual queries
+\end{itemize}
+
+\textbf{Weaknesses}:
+
+\begin{itemize}
+  \item May underperform on keyword-specific queries
+  \item Requires significant computational resources for encoding
+  \item Zero-shot performance varies by domain [4]
+  \item "Semantic drift" — can retrieve topically related but not directly relevant documents
+\end{itemize}
+
+\textbf{Implementation}:
+
+\begin{itemize}
+  \item LlamaIndex VectorStoreIndex with PGVectorStore backend
+  \item PostgreSQL with pgvector extension for vector storage
+  \item HuggingFace embedding model integration
+  \item Cosine similarity for vector comparison
+\end{itemize}
+
+\subsubsection{3.3 Hybrid Retrieval (Reciprocal Rank Fusion)}
+
+\textbf{Algorithm}: Reciprocal Rank Fusion (RRF) combines rankings from multiple retrieval systems using a simple but effective fusion formula [6]:
+
+\[
+\text{RRF}(d) = \sum_{r \in R} \frac{1}{k + \text{rank}_r(d)}
+\]
+
+Where:
+
+\begin{itemize}
+  \item $R$ = set of rankers (BM25, dense retrieval)
+  \item $\text{rank}_r(d)$ = rank position of document $d$ in ranker $r$ (or $\infty$ if not retrieved)
+  \item $k$ = constant to prevent over-weighting top-ranked documents (typically 60)
+\end{itemize}
+
+\textbf{Our Implementation}: Weighted RRF with configurable interpolation:
+
+\[
+\text{score}(d) = \alpha \cdot \frac{1}{k + \text{rank}_{\text{BM25}}(d)} + (1-\alpha) \cdot \frac{1}{k + \text{rank}_{\text{dense}}(d)}
+\]
+
+Default: $\alpha = 0.5$, $k = 60$
+
+\textbf{Strengths}:
+
+\begin{itemize}
+  \item Combines lexical and semantic signals
+  \item Robust across diverse query types
+  \item Simple, parameter-free (minimal tuning required)
+  \item Often outperforms individual methods [4]
+\end{itemize}
+
+\textbf{Weaknesses}:
+
+\begin{itemize}
+  \item Requires running two retrieval systems (increased latency)
+  \item More complex to deploy and maintain
+  \item May not improve over best individual method in all cases
+\end{itemize}
+
+\textbf{Implementation}:
+
+\begin{itemize}
+  \item Custom LlamaIndex QueryFusionRetriever
+  \item Parallel execution of BM25 and dense retrievers
+  \item Configurable fusion weights and rank constant
+  \item Source tracking for analysis (from\_bm25, from\_dense, from\_both)
+\end{itemize}
+
+\subsection{4. BeIR Benchmark Framework}
+
+The BeIR (Benchmarking IR) benchmark was introduced by Thakur et al. (2021) to address the need for standardized heterogeneous evaluation of information retrieval models [4]. BeIR consists of 18 datasets spanning diverse domains, text types, and retrieval tasks.
+
+\subsubsection{4.1 Why BeIR?}
+
+\textbf{Heterogeneity}: Unlike traditional benchmarks that focus on single domains (e.g., MS MARCO for web search), BeIR includes:
+
+\begin{itemize}
+  \item Question-answering (Natural Questions, HotpotQA)
+  \item Fact verification (FEVER, Climate-FEVER)
+  \item Citation prediction (SCIDOCS)
+  \item Duplicate question detection (Quora, CQADupStack)
+  \item Argument retrieval (ArguAna)
+  \item Scientific article retrieval (TREC-COVID, NFCorpus)
+\end{itemize}
+
+\textbf{Zero-Shot Evaluation}: All evaluations are conducted in a zero-shot setting — models are not fine-tuned on the target dataset. This tests true generalization ability rather than domain-specific optimization.
+
+\textbf{Standardized Protocol}: Consistent evaluation metrics and data splits enable fair comparison across different retrieval methods.
+
+\subsubsection{4.2 NFCorpus Dataset}
+
+NFCorpus (Nutrition Facts Corpus) is a medical/nutritional information retrieval dataset included in BeIR [7].
+
+\textbf{Characteristics}:
+
+\begin{itemize}
+  \item \textbf{Domain}: Medical and nutritional research articles
+  \item \textbf{Corpus Size}: 3,633 documents
+  \item \textbf{Queries}: 323 test queries (natural language questions)
+  \item \textbf{Relevance Judgments}: 12,334 query-document pairs with graded relevance (0-3)
+  \item \textbf{Average Document Length}: 220 words
+  \item \textbf{Average Query Length}: 3.3 words
+  \item \textbf{Challenge}: Technical medical terminology, specialized domain knowledge
+\end{itemize}
+
+\textbf{Why NFCorpus?}
+
+\begin{enumerate}
+  \item Represents a realistic specialized domain (medical information)
+  \item Manageable size for thorough experimentation
+  \item High-quality expert-labeled relevance judgments
+  \item Represents common RAG use case (technical knowledge retrieval)
+\end{enumerate}
+
+\subsubsection{4.3 Key Findings from BeIR Paper}
+
+Thakur et al. (2021) evaluated 10 SOTA retrieval systems on BeIR, revealing important insights [4]:
+
+\begin{enumerate}
+  \item \textbf{BM25 Robustness}: BM25 remained highly competitive across all datasets, often outperforming neural methods in zero-shot settings
+\end{enumerate}
+
+\begin{enumerate}
+  \item \textbf{Dense Retrieval Limitations}: Models like DPR (Dense Passage Retrieval) achieved strong results on their training domains but struggled on out-of-domain tasks
+\end{enumerate}
+
+\begin{enumerate}
+  \item \textbf{Re-ranking Success}: Two-stage pipelines (BM25 retrieval + neural re-ranking) achieved best overall performance, but at significant computational cost
+\end{enumerate}
+
+\begin{enumerate}
+  \item \textbf{Domain Sensitivity}: Performance varied dramatically across domains, with no single method dominating all datasets
+\end{enumerate}
+
+\begin{enumerate}
+  \item \textbf{Hybrid Potential}: Combining sparse and dense signals showed promise for robust retrieval
+\end{enumerate}
+
+These findings motivate our comparative study and justify the focus on hybrid approaches.
+
+\subsection{5. Research Methodology}
+
+\subsubsection{5.1 Experimental Pipeline}
+
+\begin{lstlisting}
+┌─────────────────────────────────────────────────────────────┐
+│                      Data Preparation                        │
+│  • Load BeIR NFCorpus dataset                               │
+│  • Parse corpus (documents), queries, qrels (relevance)     │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Indexing Phase                            │
+├─────────────────────────────────────────────────────────────┤
+│  BM25 Index:                                                │
+│  • Tokenize and stem documents                              │
+│  • Build inverted index                                     │
+│  • Compute IDF statistics                                   │
+├─────────────────────────────────────────────────────────────┤
+│  Dense Index:                                               │
+│  • Generate embeddings (all-MiniLM-L6-v2)                  │
+│  • Store in PostgreSQL + pgvector                           │
+│  • Create HNSW index for ANN search                         │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Retrieval Phase                           │
+│  For each query:                                            │
+│    1. BM25 Retrieval → ranked list (100 docs)              │
+│    2. Dense Retrieval → ranked list (100 docs)             │
+│    3. Hybrid Fusion (RRF) → combined ranking (100 docs)    │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Evaluation Phase                          │
+│  Compute metrics for each method:                           │
+│    • NDCG@10 (ranking quality)                             │
+│    • Recall@100 (coverage)                                 │
+│    • MAP (overall precision)                               │
+│    • MRR (first relevant position)                         │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Analysis Phase                            │
+│  • Statistical comparison of methods                        │
+│  • Query-level performance analysis                         │
+│  • Error analysis and failure cases                         │
+│  • Source attribution (BM25 vs Dense contribution)         │
+│  • Generation quality assessment (RAG)                      │
+└─────────────────────────────────────────────────────────────┘
+\end{lstlisting}
+
+\subsubsection{5.2 Evaluation Metrics}
+
+\textbf{NDCG@10 (Normalized Discounted Cumulative Gain)}:
+
+\begin{itemize}
+  \item Measures ranking quality considering relevance grades and position
+  \item Range: [0, 1], higher is better
+  \item Formula: $\text{NDCG@k} = \frac{\text{DCG@k}}{\text{IDCG@k}}$ where $\text{DCG@k} = \sum_{i=1}^{k} \frac{2^{rel_i} - 1}{\log_2(i+1)}$
+\end{itemize}
+
+\textbf{Recall@100}:
+
+\begin{itemize}
+  \item Proportion of relevant documents retrieved in top 100
+  \item Range: [0, 1], higher is better
+  \item Critical for RAG systems (need high coverage for generation)
+\end{itemize}
+
+\textbf{MAP (Mean Average Precision)}:
+
+\begin{itemize}
+  \item Average precision across all recall levels
+  \item Emphasizes precision at all cutoff points
+\end{itemize}
+
+\textbf{MRR (Mean Reciprocal Rank)}:
+
+\begin{itemize}
+  \item Average of reciprocal ranks of first relevant document
+  \item Formula: $\text{MRR} = \frac{1}{|Q|} \sum_{i=1}^{|Q|} \frac{1}{\text{rank}_i}$
+\end{itemize}
+
+\subsubsection{5.3 RAG Generation Component}
+
+To assess real-world RAG performance, we integrate OpenAI GPT-3.5-turbo for answer generation:
+
+\begin{enumerate}
+  \item \textbf{Retrieve}: Top-k documents using each method (k=5)
+  \item \textbf{Augment}: Construct prompt with query + retrieved context
+  \item \textbf{Generate}: LLM produces answer based on context
+  \item \textbf{Evaluate}: Quality assessment (relevance, accuracy, hallucination detection)
+\end{enumerate}
+
+\subsection{6. Expected Contributions}
+
+This research aims to contribute:
+
+\begin{enumerate}
+  \item \textbf{Empirical Evidence}: Rigorous quantitative comparison of retrieval methods on a standardized medical domain benchmark
+\end{enumerate}
+
+\begin{enumerate}
+  \item \textbf{Implementation Guidance}: Practical insights for deploying BM25, dense, and hybrid retrieval in production RAG systems
+\end{enumerate}
+
+\begin{enumerate}
+  \item \textbf{Hybrid Strategy Analysis}: Detailed evaluation of RRF fusion effectiveness and optimal parameterization
+\end{enumerate}
+
+\begin{enumerate}
+  \item \textbf{Failure Mode Analysis}: Characterization of query types and scenarios where each method succeeds or fails
+\end{enumerate}
+
+\begin{enumerate}
+  \item \textbf{Open-Source Implementation}: Complete LlamaIndex-based codebase for reproducible research and further experimentation
+\end{enumerate}
+
+\subsection{7. Technical Architecture}
+
+\subsubsection{7.1 System Components}
+
+\begin{lstlisting}
+┌─────────────────────────────────────────────────────────────┐
+│                   Application Layer                          │
+│                                                              │
+│  experiment_llamaindex.py - Main experiment runner          │
+│  analyze_dataset.py - Dataset statistics                    │
+└────────────┬─────────────────────────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   LlamaIndex Layer                           │
+├──────────────────┬──────────────────┬───────────────────────┤
+│  BM25 Module     │  Dense Module    │  Hybrid Module        │
+│  (llamaindex_    │  (llamaindex_    │  (llamaindex_         │
+│   bm25.py)       │   rag.py)        │   hybrid.py)          │
+└────────┬─────────┴────────┬─────────┴────────┬──────────────┘
+         │                  │                  │
+         ▼                  ▼                  ▼
+┌─────────────────┐ ┌─────────────────┐ ┌────────────────────┐
+│  BM25Retriever  │ │ VectorStoreIndex│ │ QueryFusion        │
+│  (bm25s)        │ │ (pgvector)      │ │ Retriever          │
+└─────────────────┘ └────────┬────────┘ └────────────────────┘
+                             │
+                             ▼
+                   ┌─────────────────────┐
+                   │   PostgreSQL 16     │
+                   │   + pgvector        │
+                   │   (port 5433)       │
+                   └─────────────────────┘
+\end{lstlisting}
+
+\subsubsection{7.2 Key Technologies}
+
+\textbf{LlamaIndex Framework}:
+
+\begin{itemize}
+  \item Unified abstraction for retrieval and RAG
+  \item Modular architecture for easy experimentation
+  \item Built-in evaluation utilities
+  \item Integration with major vector stores and LLMs
+\end{itemize}
+
+\textbf{PostgreSQL + pgvector}:
+
+\begin{itemize}
+  \item Production-grade vector storage
+  \item ACID compliance and data persistence
+  \item Efficient ANN search with HNSW index
+  \item SQL-based querying and management
+\end{itemize}
+
+\textbf{sentence-transformers}:
+
+\begin{itemize}
+  \item State-of-the-art embedding models
+  \item Easy integration with PyTorch
+  \item Pre-trained models for multiple languages and domains
+\end{itemize}
+
+\textbf{BeIR Framework}:
+
+\begin{itemize}
+  \item Standardized dataset loading
+  \item Consistent evaluation metrics
+  \item Reproducible benchmarking protocol
+\end{itemize}
+
+\subsection{8. Challenges and Limitations}
+
+\subsubsection{8.1 Technical Challenges}
+
+\begin{enumerate}
+  \item \textbf{Computational Cost}: Dense retrieval requires expensive embedding generation and vector storage
+  \item \textbf{Latency Trade-offs}: Hybrid methods increase query latency (2x retrieval operations)
+  \item \textbf{Index Maintenance}: Vector indexes require periodic rebuilding and optimization
+  \item \textbf{Memory Constraints}: Large vector stores consume significant RAM
+\end{enumerate}
+
+\subsubsection{8.2 Methodological Limitations}
+
+\begin{enumerate}
+  \item \textbf{Single Dataset}: NFCorpus represents one specialized domain; results may not generalize to all domains
+  \item \textbf{Zero-Shot Only}: We do not explore fine-tuning or domain adaptation strategies
+  \item \textbf{Fixed Embeddings}: Using pre-trained all-MiniLM-L6-v2; specialized medical embeddings might improve dense retrieval
+  \item \textbf{Evaluation Metrics}: IR metrics may not fully capture user satisfaction in RAG applications
+\end{enumerate}
+
+\subsubsection{8.3 Scope Limitations}
+
+This research focuses on retrieval quality and does not extensively explore:
+
+\begin{itemize}
+  \item Generation quality in RAG systems (beyond basic assessment)
+  \item Multi-hop reasoning and complex queries
+  \item Real-time streaming or online learning
+  \item Multi-lingual retrieval
+  \item Adversarial robustness
+\end{itemize}
+
+\subsection{9. Future Directions}
+
+Potential extensions of this research:
+
+\begin{enumerate}
+  \item \textbf{Multi-Dataset Evaluation}: Expand to all 18 BeIR datasets for comprehensive comparison
+  \item \textbf{Fine-Tuning Experiments}: Evaluate impact of domain-specific fine-tuning on dense retrieval
+  \item \textbf{Advanced Fusion}: Explore learned fusion methods (e.g., neural re-rankers, LambdaMART)
+  \item \textbf{Query Understanding}: Integrate query classification to route queries to optimal retrieval method
+  \item \textbf{Iterative RAG}: Implement multi-turn retrieval and refinement for complex information needs
+  \item \textbf{Cost-Performance Analysis}: Quantify trade-offs between retrieval quality, latency, and infrastructure costs
+\end{enumerate}
+
+\subsection{10. Conclusion}
+
+This research addresses a critical question in modern information retrieval and RAG system design: \textbf{Which retrieval methods provide the best balance of effectiveness, robustness, and practicality for real-world applications?}
+
+By conducting a systematic comparison of BM25 (sparse), dense semantic search, and hybrid retrieval using the BeIR benchmark, we aim to provide evidence-based guidance for practitioners building production RAG systems. The use of LlamaIndex and PostgreSQL ensures that our findings translate directly to deployment-ready implementations.
+
+The medical domain focus (NFCorpus) represents a particularly important use case where retrieval accuracy directly impacts user safety and decision quality. Our results will help identify which retrieval strategies are most suitable for high-stakes knowledge-intensive applications.
+
+\subsection{References}
+
+[1] Robertson, S. E., \& Zaragoza, H. (2009). \textit{The Probabilistic Relevance Framework: BM25 and Beyond}. Foundations and Trends in Information Retrieval, 3(4), 333-389.
+
+[2] Karpukhin, V., Oguz, B., Min, S., Lewis, P., Wu, L., Edunov, S., ... \& Yih, W. T. (2020). \textit{Dense Passage Retrieval for Open-Domain Question Answering}. In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pp. 6769-6781.
+
+[3] Reimers, N., \& Gurevych, I. (2019). \textit{Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks}. In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP), pp. 3982-3992.
+
+[4] Thakur, N., Reimers, N., Rücklé, A., Srivastava, A., \& Gurevych, I. (2021). \textit{BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation of Information Retrieval Models}. In Thirty-fifth Conference on Neural Information Processing Systems Datasets and Benchmarks Track (NeurIPS 2021). arXiv:2104.08663.
+
+[5] Lewis, P., Perez, E., Piktus, A., Petroni, F., Karpukhin, V., Goyal, N., ... \& Kiela, D. (2020). \textit{Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks}. In Advances in Neural Information Processing Systems (NeurIPS 2020), Vol. 33, pp. 9459-9474.
+
+[6] Cormack, G. V., Clarke, C. L., \& Buettcher, S. (2009). \textit{Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods}. In Proceedings of the 32nd International ACM SIGIR Conference on Research and Development in Information Retrieval (SIGIR '09), pp. 758-759.
+
+[7] Boteva, V., Gholipour, D., Sokolov, A., \& Riezler, S. (2016). \textit{A Full-Text Learning to Rank Dataset for Medical Information Retrieval}. In Proceedings of the European Conference on Information Retrieval (ECIR 2016), pp. 716-722.
+
+\subsection{Additional Resources}
+
+\begin{itemize}
+  \item BeIR GitHub Repository: https://github.com/UKPLab/beir
+  \item LlamaIndex Documentation: https://docs.llamaindex.ai/
+  \item pgvector Documentation: https://github.com/pgvector/pgvector
+  \item sentence-transformers Documentation: https://www.sbert.net/
+\end{itemize}
+
+\textbf{Document Version}: 1.0  
+\textbf{Last Updated}: 2025  
+\textbf{Authors}: Research Team  
+\textbf{License}: MIT License

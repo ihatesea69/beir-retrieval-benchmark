@@ -1,0 +1,681 @@
+\section{System Architecture: BeIR Retrieval Comparison Project}
+
+\subsection{1. High-Level System Overview}
+
+% Mermaid diagram (not renderable in LaTeX)
+% flowchart TB
+%     subgraph "📊 DATA LAYER"
+%         BEIR[("🗂️ BeIR Benchmark<br/>NFCorpus Dataset")]
+%         CORPUS["📄 Corpus<br/>3,633 Medical Docs"]
+%         QUERIES["❓ Queries<br/>323 Test Queries"]
+%         QRELS["✅ Qrels<br/>12,334 Relevance Labels"]
+%     end
+%     
+%     subgraph "🔧 PROCESSING LAYER"
+%         LOADER["📥 BeirDataLoader<br/>data_loader.py"]
+%         CHUNKER["✂️ Document Chunker<br/>SentenceSplitter<br/>(512 tokens, 50 overlap)"]
+%         EMBEDDER["🧠 Embedding Generator<br/>all-MiniLM-L6-v2<br/>(384 dimensions)"]
+%     end
+%     
+%     subgraph "🗄️ STORAGE LAYER"
+%         subgraph "Dense Storage (Persistent)"
+%             POSTGRES[("🐘 PostgreSQL 16<br/>+ pgvector<br/>Port 5433")]
+%             VECTORS["📊 Vector Index<br/>HNSW Algorithm<br/>Cosine Similarity"]
+%         end
+%         subgraph "Sparse Storage (Persistent)"
+%             DOCSTORE[("💾 SimpleDocumentStore<br/>docstore.json<br/>117 nodes")]
+%             BM25_IDX["📇 BM25 Index<br/>Inverted Index<br/>Rebuilt from Docstore"]
+%         end
+%     end
+%     
+%     subgraph "🔍 RETRIEVAL LAYER"
+%         BM25_RET["🔤 BM25 Retriever<br/>llamaindex_bm25.py<br/>Lexical Matching<br/>✅ Persistent"]
+%         DENSE_RET["🎯 Dense Retriever<br/>llamaindex_rag.py<br/>Semantic Matching<br/>✅ Persistent"]
+%         HYBRID_RET["🔗 Hybrid Retriever<br/>llamaindex_hybrid.py<br/>RRF Fusion (α=0.5, k=60)"]
+%     end
+%     
+%     subgraph "⚡ GENERATION LAYER (Optional)"
+%         LLM["🤖 OpenAI GPT-3.5<br/>Answer Generation<br/>(RAG Pipeline)"]
+%         PROMPT["📝 Prompt Template<br/>Context + Query → Answer"]
+%     end
+%     
+%     subgraph "📈 EVALUATION LAYER"
+%         METRICS["📊 Evaluation Metrics<br/>metrics.py<br/>RetrievalEvaluator"]
+%         RESULTS["📋 Results<br/>NDCG@10, Recall@100<br/>MAP, MRR"]
+%     end
+%     
+%     %% Data Flow
+%     BEIR --> CORPUS & QUERIES & QRELS
+%     CORPUS --> LOADER
+%     QUERIES --> LOADER
+%     QRELS --> METRICS
+%     
+%     %% Processing Flow
+%     LOADER --> CHUNKER
+%     CHUNKER --> EMBEDDER
+%     CHUNKER --> DOCSTORE
+%     EMBEDDER --> POSTGRES
+%     
+%     %% Storage to Index
+%     POSTGRES --> VECTORS
+%     DOCSTORE --> BM25_IDX
+%     
+%     %% Retrieval Flow
+%     VECTORS --> DENSE_RET
+%     BM25_IDX --> BM25_RET
+%     
+%     BM25_RET --> HYBRID_RET
+%     DENSE_RET --> HYBRID_RET
+%     
+%     %% Evaluation Flow
+%     BM25_RET & DENSE_RET & HYBRID_RET --> METRICS
+%     
+%     %% RAG Generation Flow (Optional)
+%     DENSE_RET -.-> PROMPT
+%     HYBRID_RET -.-> PROMPT
+%     PROMPT -.-> LLM
+%     
+%     %% Results
+%     LLM -.-> RESULTS
+%     METRICS --> RESULTS
+%     
+%     %% Styling
+%     classDef persistentStorage fill:#90EE90,stroke:#2E8B57,stroke-width:3px
+%     classDef retriever fill:#87CEEB,stroke:#4682B4,stroke-width:2px
+%     classDef evaluation fill:#FFD700,stroke:#FFA500,stroke-width:2px
+%     
+%     class POSTGRES,VECTORS,DOCSTORE,BM25_IDX persistentStorage
+%     class BM25_RET,DENSE_RET,HYBRID_RET retriever
+%     class METRICS,RESULTS evaluation
+
+\subsection{2. Detailed Data Flow Pipeline}
+
+% Mermaid diagram (not renderable in LaTeX)
+% flowchart LR
+%     subgraph "INPUT"
+%         A1["📂 NFCorpus<br/>Download"]
+%         A2["📄 corpus.jsonl"]
+%         A3["❓ queries.jsonl"]
+%         A4["✅ qrels/test.tsv"]
+%     end
+%     
+%     subgraph "DATA PROCESSING"
+%         B1["📥 GenericDataLoader<br/>BeIR Library"]
+%         B2["🔄 prepare_corpus_for_indexing()"]
+%         B3["📋 Document Dict<br/>{id, title, text, full_text}"]
+%     end
+%     
+%     subgraph "INDEXING PIPELINE"
+%         C1["✂️ SentenceSplitter<br/>chunk_size=512<br/>overlap=50"]
+%         C2["📝 LlamaIndex Nodes<br/>Text Chunks"]
+%         C3["🧠 HuggingFaceEmbedding<br/>384 dimensions"]
+%         C4["📊 Vector Arrays<br/>float32"]
+%     end
+%     
+%     subgraph "STORAGE"
+%         D1[("🐘 PostgreSQL<br/>pgvector")]
+%         D2["📇 BM25 Index<br/>In-Memory"]
+%     end
+%     
+%     A1 --> A2 & A3 & A4
+%     A2 & A3 & A4 --> B1
+%     B1 --> B2
+%     B2 --> B3
+%     B3 --> C1
+%     C1 --> C2
+%     C2 --> C3
+%     C2 --> D2
+%     C3 --> C4
+%     C4 --> D1
+
+\subsection{3. Three Retrieval Methods Comparison}
+
+% Mermaid diagram (not renderable in LaTeX)
+% flowchart TB
+%     QUERY["🔍 User Query<br/>'breast cancer treatment'"]
+%     
+%     subgraph "METHOD A: BM25 (Sparse/Lexical)"
+%         A1["📝 Tokenization<br/>+ Stemming"]
+%         A2["🔤 Term Matching<br/>IDF Weighting"]
+%         A3["📊 BM25 Score<br/>TF-IDF Based"]
+%         A4["📋 Ranked Results<br/>Lexical Match"]
+%     end
+%     
+%     subgraph "METHOD B: Dense (Semantic)"
+%         B1["🧠 Query Embedding<br/>384-dim Vector"]
+%         B2["📐 Cosine Similarity<br/>Vector Search"]
+%         B3["🎯 ANN Search<br/>HNSW Index"]
+%         B4["📋 Ranked Results<br/>Semantic Match"]
+%     end
+%     
+%     subgraph "METHOD C: Hybrid (RRF Fusion)"
+%         C1["🔗 Merge Results<br/>From A + B"]
+%         C2["⚖️ RRF Algorithm<br/>α=0.5, k=60"]
+%         C3["🏆 Final Ranking<br/>Combined Score"]
+%     end
+%     
+%     QUERY --> A1 & B1
+%     A1 --> A2 --> A3 --> A4
+%     B1 --> B2 --> B3 --> B4
+%     A4 --> C1
+%     B4 --> C1
+%     C1 --> C2 --> C3
+
+\subsection{4. BM25 Retrieval Algorithm Detail}
+
+% Mermaid diagram (not renderable in LaTeX)
+% flowchart TB
+%     subgraph "INPUT"
+%         Q["Query: 'cancer treatment'"]
+%         D["Document Collection<br/>3,633 docs"]
+%     end
+%     
+%     subgraph "PREPROCESSING"
+%         T1["Tokenization<br/>'cancer', 'treatment'"]
+%         T2["Stemming (Pystemmer)<br/>'cancer', 'treat'"]
+%         T3["Stop Word Removal"]
+%     end
+%     
+%     subgraph "BM25 CALCULATION"
+%         IDF["IDF Calculation<br/>log((N-df+0.5)/(df+0.5))"]
+%         TF["Term Frequency<br/>f(t,d)"]
+%         DL["Doc Length Norm<br/>|D|/avgdl"]
+%         SCORE["BM25 Score<br/>Σ IDF × TF_norm"]
+%     end
+%     
+%     subgraph "FORMULA"
+%         FORMULA["score(D,Q) = Σ IDF(qi) × <br/>f(qi,D)×(k1+1) / <br/>(f(qi,D)+k1×(1-b+b×|D|/avgdl))"]
+%     end
+%     
+%     subgraph "PARAMETERS"
+%         P1["k1 = 1.5<br/>(term saturation)"]
+%         P2["b = 0.75<br/>(length norm)"]
+%     end
+%     
+%     subgraph "OUTPUT"
+%         RANK["Ranked Documents<br/>by BM25 Score"]
+%     end
+%     
+%     Q --> T1 --> T2 --> T3
+%     D --> T1
+%     T3 --> IDF & TF & DL
+%     IDF & TF & DL --> SCORE
+%     FORMULA --> SCORE
+%     P1 & P2 --> SCORE
+%     SCORE --> RANK
+
+\subsection{5. Dense Retrieval (Semantic Search) Pipeline}
+
+% Mermaid diagram (not renderable in LaTeX)
+% flowchart TB
+%     subgraph "DOCUMENT INDEXING (Offline)"
+%         D1["📄 Documents"]
+%         D2["✂️ Chunking<br/>512 tokens"]
+%         D3["🧠 Encoder<br/>all-MiniLM-L6-v2"]
+%         D4["📊 Doc Vectors<br/>[384-dim]"]
+%         D5[("🐘 PostgreSQL<br/>pgvector Store")]
+%     end
+%     
+%     subgraph "QUERY PROCESSING (Online)"
+%         Q1["❓ Query"]
+%         Q2["🧠 Encoder<br/>Same Model"]
+%         Q3["📊 Query Vector<br/>[384-dim]"]
+%     end
+%     
+%     subgraph "RETRIEVAL"
+%         R1["📐 Cosine Similarity<br/>sim(q,d) = q·d/||q||·||d||"]
+%         R2["🔍 HNSW Index<br/>Approximate NN"]
+%         R3["🏆 Top-K Results"]
+%     end
+%     
+%     D1 --> D2 --> D3 --> D4 --> D5
+%     Q1 --> Q2 --> Q3
+%     Q3 & D5 --> R1
+%     R1 --> R2 --> R3
+
+\subsection{6. Hybrid Retrieval with RRF Algorithm}
+
+% Mermaid diagram (not renderable in LaTeX)
+% flowchart TB
+%     QUERY["🔍 Query"]
+%     
+%     subgraph "PARALLEL RETRIEVAL"
+%         BM25["📇 BM25 Search<br/>Top-100"]
+%         DENSE["🎯 Dense Search<br/>Top-100"]
+%     end
+%     
+%     subgraph "BM25 RESULTS"
+%         B1["Doc A: rank 1"]
+%         B2["Doc B: rank 2"]
+%         B3["Doc C: rank 3"]
+%         B4["Doc D: rank 5"]
+%     end
+%     
+%     subgraph "DENSE RESULTS"
+%         D1["Doc B: rank 1"]
+%         D2["Doc E: rank 2"]
+%         D3["Doc A: rank 3"]
+%         D4["Doc F: rank 4"]
+%     end
+%     
+%     subgraph "RRF FUSION"
+%         RRF["⚖️ RRF Formula<br/>score(d) = α/(k+rank_bm25) + (1-α)/(k+rank_dense)<br/>α=0.5, k=60"]
+%     end
+%     
+%     subgraph "SCORE CALCULATION"
+%         S1["Doc A: 0.5/61 + 0.5/63 = 0.0161"]
+%         S2["Doc B: 0.5/62 + 0.5/61 = 0.0163 ⭐"]
+%         S3["Doc C: 0.5/63 + 0 = 0.0079"]
+%         S4["Doc D: 0.5/65 + 0 = 0.0077"]
+%         S5["Doc E: 0 + 0.5/62 = 0.0081"]
+%         S6["Doc F: 0 + 0.5/64 = 0.0078"]
+%     end
+%     
+%     subgraph "FINAL RANKING"
+%         F1["1. Doc B (both) - 0.0163"]
+%         F2["2. Doc A (both) - 0.0161"]
+%         F3["3. Doc E (dense) - 0.0081"]
+%         F4["4. Doc C (bm25) - 0.0079"]
+%     end
+%     
+%     QUERY --> BM25 & DENSE
+%     BM25 --> B1 & B2 & B3 & B4
+%     DENSE --> D1 & D2 & D3 & D4
+%     B1 & B2 & B3 & B4 & D1 & D2 & D3 & D4 --> RRF
+%     RRF --> S1 & S2 & S3 & S4 & S5 & S6
+%     S1 & S2 & S3 & S4 & S5 & S6 --> F1 & F2 & F3 & F4
+
+\subsection{7. RAG (Retrieval-Augmented Generation) Pipeline}
+
+% Mermaid diagram (not renderable in LaTeX)
+% flowchart TB
+%     subgraph "USER INPUT"
+%         Q["❓ User Query<br/>'What causes diabetes?'"]
+%     end
+%     
+%     subgraph "RETRIEVAL PHASE"
+%         R1["🔍 Hybrid Search"]
+%         R2["📄 Retrieved Docs<br/>Top-5 Relevant"]
+%     end
+%     
+%     subgraph "CONTEXT CONSTRUCTION"
+%         C1["📝 Context Builder"]
+%         C2["📋 Formatted Context<br/>Doc1 + Doc2 + ... + Doc5"]
+%     end
+%     
+%     subgraph "PROMPT TEMPLATE"
+%         P1["System: You are a medical expert..."]
+%         P2["Context: {retrieved_documents}"]
+%         P3["Question: {user_query}"]
+%         P4["Answer based on context only."]
+%     end
+%     
+%     subgraph "LLM GENERATION"
+%         L1["🤖 OpenAI GPT-3.5-turbo<br/>temperature=0.1"]
+%         L2["💬 Generated Answer"]
+%     end
+%     
+%     subgraph "OUTPUT"
+%         O1["📝 Final Response"]
+%         O2["📚 Source Documents"]
+%     end
+%     
+%     Q --> R1 --> R2
+%     R2 --> C1 --> C2
+%     C2 --> P2
+%     P1 & P2 & P3 & P4 --> L1
+%     L1 --> L2
+%     L2 --> O1
+%     R2 --> O2
+
+\subsection{8. Evaluation Pipeline}
+
+% Mermaid diagram (not renderable in LaTeX)
+% flowchart TB
+%     subgraph "GROUND TRUTH"
+%         GT["✅ Qrels<br/>query_id → {doc_id: relevance}"]
+%     end
+%     
+%     subgraph "RETRIEVAL OUTPUT"
+%         RES["📋 Retrieved Results<br/>query_id → [doc_ids ranked]"]
+%     end
+%     
+%     subgraph "METRICS CALCULATION"
+%         M1["📊 NDCG@10<br/>Ranking Quality"]
+%         M2["📊 Recall@100<br/>Coverage"]
+%         M3["📊 MAP<br/>Avg Precision"]
+%         M4["📊 MRR<br/>First Hit Position"]
+%     end
+%     
+%     subgraph "NDCG FORMULA"
+%         N1["DCG = Σ rel_i / log2(i+1)"]
+%         N2["IDCG = Ideal DCG"]
+%         N3["NDCG = DCG / IDCG"]
+%     end
+%     
+%     subgraph "RECALL FORMULA"
+%         R1["Recall@k = |Retrieved ∩ Relevant| / |Relevant|"]
+%     end
+%     
+%     subgraph "COMPARISON"
+%         CMP["📈 Method Comparison<br/>BM25 vs Dense vs Hybrid"]
+%     end
+%     
+%     GT & RES --> M1 & M2 & M3 & M4
+%     N1 --> N2 --> N3 --> M1
+%     R1 --> M2
+%     M1 & M2 & M3 & M4 --> CMP
+
+\subsection{9. Project Directory Structure}
+
+% Mermaid diagram (not renderable in LaTeX)
+% flowchart TB
+%     subgraph "📁 ROOT"
+%         ROOT["Đồ Án Truy Hồi Thông Tin/"]
+%     end
+%     
+%     subgraph "📁 src/ - Core Modules"
+%         SRC["src/"]
+%         S1["data_loader.py<br/>BeIR data loading"]
+%         S2["llamaindex_bm25.py<br/>BM25 retrieval"]
+%         S3["llamaindex_rag.py<br/>Dense + RAG"]
+%         S4["llamaindex_hybrid.py<br/>Hybrid RRF"]
+%         S5["⚠️ DEPRECATED:<br/>bm25_retriever.py<br/>rag_system.py (FAISS)<br/>hybrid_retriever.py"]
+%     end
+%     
+%     subgraph "📁 evaluation/ - Metrics"
+%         EVAL["evaluation/"]
+%         E1["metrics.py<br/>NDCG, Recall, MAP, MRR"]
+%     end
+%     
+%     subgraph "📁 notebooks/ - Experiments"
+%         NB["notebooks/"]
+%         N1["experiment_llamaindex.py<br/>Main experiment runner"]
+%         N2["experiment_runner.py<br/>Legacy"]
+%     end
+%     
+%     subgraph "📁 data/ - Datasets"
+%         DATA["data/"]
+%         D1["beir_datasets/<br/>nfcorpus/"]
+%         D2["corpus.jsonl"]
+%         D3["queries.jsonl"]
+%         D4["qrels/test.tsv"]
+%     end
+%     
+%     subgraph "📁 scripts/ - Utilities"
+%         SCRIPTS["scripts/"]
+%         SC1["analyze_dataset.py"]
+%     end
+%     
+%     subgraph "📁 Documentation"
+%         DOCS["📄 Documentation"]
+%         DOC1["README.md"]
+%         DOC2["PROBLEM_STATEMENT.md"]
+%         DOC3["DATASET_DOCUMENTATION.md"]
+%         DOC4["MIGRATION_LLAMAINDEX.md"]
+%         DOC5["POSTGRESQL_GUIDE.md"]
+%     end
+%     
+%     subgraph "📁 Config"
+%         CONFIG["⚙️ Config Files"]
+%         CF1[".env"]
+%         CF2["docker-compose.yml"]
+%         CF3["requirements.txt"]
+%         CF4["init.sql"]
+%     end
+%     
+%     ROOT --> SRC & EVAL & NB & DATA & SCRIPTS & DOCS & CONFIG
+%     SRC --> S1 & S2 & S3 & S4 & S5
+%     EVAL --> E1
+%     NB --> N1 & N2
+%     DATA --> D1 --> D2 & D3 & D4
+%     SCRIPTS --> SC1
+%     DOCS --> DOC1 & DOC2 & DOC3 & DOC4 & DOC5
+%     CONFIG --> CF1 & CF2 & CF3 & CF4
+
+\subsection{10. Infrastructure \& Deployment}
+
+% Mermaid diagram (not renderable in LaTeX)
+% flowchart TB
+%     subgraph "🖥️ Local Development"
+%         DEV["Developer Machine<br/>Windows"]
+%         VENV["Python .venv<br/>uv package manager"]
+%         CODE["VS Code IDE"]
+%     end
+%     
+%     subgraph "🐳 Docker Services"
+%         DC["docker-compose.yml"]
+%         
+%         subgraph "PostgreSQL Container"
+%             PG["🐘 ankane/pgvector:latest"]
+%             PG_PORT["Port: 5433:5432"]
+%             PG_DB["DB: beir_retrieval"]
+%             PG_VOL["Volume: postgres_data"]
+%         end
+%         
+%         subgraph "pgAdmin Container"
+%             PGADMIN["📊 dpage/pgadmin4"]
+%             PGADMIN_PORT["Port: 5050:80"]
+%         end
+%     end
+%     
+%     subgraph "🔌 External Services"
+%         OPENAI["🤖 OpenAI API<br/>GPT-3.5-turbo"]
+%         HF["🤗 HuggingFace<br/>Embedding Models"]
+%         BEIR_SRC["📦 BeIR Repository<br/>Dataset Download"]
+%     end
+%     
+%     subgraph "💾 Data Storage"
+%         LOCAL_DATA["./data/<br/>BeIR datasets"]
+%         PG_VECTORS["PostgreSQL<br/>Vector embeddings"]
+%         MODELS_CACHE["./models/<br/>Cached embeddings"]
+%     end
+%     
+%     DEV --> VENV --> CODE
+%     CODE --> DC
+%     DC --> PG & PGADMIN
+%     PG --> PG_PORT & PG_DB & PG_VOL
+%     PGADMIN --> PGADMIN_PORT
+%     
+%     CODE --> OPENAI & HF & BEIR_SRC
+%     BEIR_SRC --> LOCAL_DATA
+%     HF --> MODELS_CACHE
+%     CODE --> PG_VECTORS
+
+\subsection{11. Complete End-to-End Flow}
+
+% Mermaid diagram (not renderable in LaTeX)
+% sequenceDiagram
+%     participant User as 👤 User/Researcher
+%     participant Exp as 🧪 Experiment Runner
+%     participant Loader as 📥 Data Loader
+%     participant BM25 as 🔤 BM25 Retriever
+%     participant Dense as 🎯 Dense Retriever
+%     participant PG as 🐘 PostgreSQL
+%     participant Hybrid as 🔗 Hybrid Retriever
+%     participant Eval as 📊 Evaluator
+%     participant LLM as 🤖 OpenAI GPT
+%     
+%     Note over User,LLM: PHASE 1: DATA LOADING
+%     User->>Exp: Start experiment
+%     Exp->>Loader: load_dataset('nfcorpus')
+%     Loader->>Loader: Download BeIR dataset
+%     Loader-->>Exp: corpus, queries, qrels
+%     
+%     Note over User,LLM: PHASE 2: INDEXING
+%     Exp->>BM25: build_index(documents)
+%     BM25->>BM25: Tokenize & stem
+%     BM25->>BM25: Build inverted index
+%     
+%     Exp->>Dense: build_index(documents)
+%     Dense->>Dense: Chunk documents
+%     Dense->>Dense: Generate embeddings
+%     Dense->>PG: Store vectors
+%     PG-->>Dense: Index created
+%     
+%     Note over User,LLM: PHASE 3: RETRIEVAL
+%     loop For each query
+%         Exp->>BM25: search(query, top_k=100)
+%         BM25-->>Exp: BM25 results
+%         
+%         Exp->>Dense: search(query, top_k=100)
+%         Dense->>PG: Vector similarity search
+%         PG-->>Dense: Similar vectors
+%         Dense-->>Exp: Dense results
+%         
+%         Exp->>Hybrid: search(query, top_k=100)
+%         Hybrid->>Hybrid: RRF fusion
+%         Hybrid-->>Exp: Hybrid results
+%     end
+%     
+%     Note over User,LLM: PHASE 4: EVALUATION
+%     Exp->>Eval: evaluate_batch(results, qrels)
+%     Eval->>Eval: Calculate NDCG@10
+%     Eval->>Eval: Calculate Recall@100
+%     Eval->>Eval: Calculate MAP, MRR
+%     Eval-->>Exp: Metrics dataframe
+%     
+%     Note over User,LLM: PHASE 5: RAG GENERATION (Optional)
+%     Exp->>Dense: generate_answer(query)
+%     Dense->>PG: Retrieve top-5 docs
+%     PG-->>Dense: Context documents
+%     Dense->>LLM: Prompt with context
+%     LLM-->>Dense: Generated answer
+%     Dense-->>Exp: Answer + sources
+%     
+%     Exp-->>User: 📋 Final Results & Comparison
+
+\subsection{12. Technology Stack Summary}
+
+% Mermaid diagram (not renderable in LaTeX)
+% mindmap
+%     root((🎯 BeIR Retrieval<br/>Comparison Project))
+%         📊 Data Layer
+%             BeIR Benchmark
+%             NFCorpus Dataset
+%             3,633 Medical Docs
+%             323 Test Queries
+%         🔧 Framework
+%             LlamaIndex v0.10+
+%             Unified Retrieval API
+%             Document Chunking
+%             Embedding Management
+%         🗄️ Storage
+%             PostgreSQL 16
+%             pgvector Extension
+%             HNSW Index
+%             Docker Container
+%         🔍 Retrieval Methods
+%             BM25 Sparse
+%                 Lexical Matching
+%                 TF-IDF Based
+%             Dense Semantic
+%                 Vector Embeddings
+%                 Cosine Similarity
+%             Hybrid RRF
+%                 Rank Fusion
+%                 α=0.5, k=60
+%         🧠 ML Models
+%             Embeddings
+%                 all-MiniLM-L6-v2
+%                 384 dimensions
+%             Generation
+%                 GPT-3.5-turbo
+%                 OpenAI API
+%         📈 Evaluation
+%             NDCG@10
+%             Recall@100
+%             MAP
+%             MRR
+%         🛠️ Tools
+%             Python 3.10+
+%             Docker Compose
+%             VS Code
+%             uv Package Manager
+
+\subsection{13. Key Configuration Parameters}
+
+% Mermaid diagram (not renderable in LaTeX)
+% flowchart TB
+%     subgraph "🔧 EMBEDDING CONFIG"
+%         E1["Model: all-MiniLM-L6-v2"]
+%         E2["Dimensions: 384"]
+%         E3["Cache: ./models/"]
+%     end
+%     
+%     subgraph "✂️ CHUNKING CONFIG"
+%         C1["Chunk Size: 512 tokens"]
+%         C2["Chunk Overlap: 50 tokens"]
+%         C3["Splitter: SentenceSplitter"]
+%     end
+%     
+%     subgraph "🔍 RETRIEVAL CONFIG"
+%         R1["Top-K: 100 (retrieval)"]
+%         R2["Top-K: 10 (evaluation)"]
+%         R3["Similarity: Cosine"]
+%     end
+%     
+%     subgraph "🔗 HYBRID CONFIG"
+%         H1["Alpha (α): 0.5"]
+%         H2["RRF Constant (k): 60"]
+%         H3["Fusion: Reciprocal Rank"]
+%     end
+%     
+%     subgraph "🐘 POSTGRESQL CONFIG"
+%         P1["Host: localhost"]
+%         P2["Port: 5433"]
+%         P3["DB: beir_retrieval"]
+%         P4["User: beir_user"]
+%     end
+%     
+%     subgraph "🤖 LLM CONFIG"
+%         L1["Model: gpt-3.5-turbo"]
+%         L2["Temperature: 0.1"]
+%         L3["Max Tokens: 500"]
+%     end
+
+\subsection{14. Performance Metrics Visualization}
+
+% Mermaid diagram (not renderable in LaTeX)
+% xychart-beta
+%     title "Retrieval Method Comparison (NFCorpus)"
+%     x-axis ["NDCG@10", "Recall@100", "MAP", "MRR"]
+%     y-axis "Score" 0 --> 0.5
+%     bar [0.195, 0.233, 0.15, 0.45] "BM25"
+%     bar [0.353, 0.277, 0.22, 0.52] "Dense"
+%     bar [0.283, 0.280, 0.19, 0.50] "Hybrid"
+
+\subsection{15. Error Handling \& Edge Cases}
+
+% Mermaid diagram (not renderable in LaTeX)
+% flowchart TB
+%     subgraph "POTENTIAL ISSUES"
+%         I1["❌ PostgreSQL Connection Failed"]
+%         I2["❌ OpenAI API Key Missing"]
+%         I3["❌ Empty Query Results"]
+%         I4["❌ Dataset Not Found"]
+%         I5["❌ Memory Overflow"]
+%     end
+%     
+%     subgraph "SOLUTIONS"
+%         S1["Check Docker: docker ps<br/>Restart: docker-compose up -d"]
+%         S2["Set .env file<br/>OPENAI_API_KEY=sk-xxx"]
+%         S3["Return empty list<br/>Log warning"]
+%         S4["Auto-download from BeIR<br/>util.download_and_unzip()"]
+%         S5["Batch processing<br/>Reduce chunk size"]
+%     end
+%     
+%     I1 --> S1
+%     I2 --> S2
+%     I3 --> S3
+%     I4 --> S4
+%     I5 --> S5
+
+\textbf{Document Information:}
+
+\begin{itemize}
+  \item \textbf{Version:} 1.0
+  \item \textbf{Last Updated:} January 29, 2026
+  \item \textbf{Diagrams:} 15 Mermaid charts
+  \item \textbf{Purpose:} Complete system architecture documentation
+\end{itemize}

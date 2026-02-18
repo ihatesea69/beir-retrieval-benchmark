@@ -59,7 +59,8 @@ class LlamaIndexExperiment:
         print(f"✓ Dataset: {len(self.corpus)} docs, {len(self.test_queries)} test queries")
         
         # Evaluator
-        self.evaluator = RetrievalEvaluator(self.qrels)
+        self.evaluator = RetrievalEvaluator()
+        self.qrels = self.qrels  # keep reference for evaluate calls
     
     def run_bm25(self) -> pd.DataFrame:
         """Run BM25 retrieval"""
@@ -89,7 +90,7 @@ class LlamaIndexExperiment:
         results = bm25.batch_search(self.test_queries, top_k=100)
         
         # Evaluate
-        metrics = self.evaluator.evaluate_batch(results)
+        metrics = RetrievalEvaluator.evaluate_retrieval(results, self.qrels)
         
         return metrics
     
@@ -107,7 +108,7 @@ class LlamaIndexExperiment:
         results = rag.batch_search(self.test_queries, top_k=100)
         
         # Evaluate
-        metrics = self.evaluator.evaluate_batch(results)
+        metrics = RetrievalEvaluator.evaluate_retrieval(results, self.qrels)
         
         return rag, metrics
     
@@ -129,7 +130,7 @@ class LlamaIndexExperiment:
         results = hybrid.batch_search(self.test_queries, top_k=100)
         
         # Evaluate
-        metrics = self.evaluator.evaluate_batch(results)
+        metrics = RetrievalEvaluator.evaluate_retrieval(results, self.qrels)
         
         # Source analysis
         all_sources = {'from_bm25': 0, 'from_dense': 0, 'from_both': 0}
@@ -152,14 +153,14 @@ class LlamaIndexExperiment:
     def run_all(self):
         """Run tất cả pipelines"""
         # BM25
-        print("\n🔨 Building BM25...")
-        bm25 = LlamaIndexBM25()
-        bm25.build_index(self.documents)
         df_bm25 = self.run_bm25()
         
         # Dense
-        print("\n🔨 Building Dense (PostgreSQL)...")
         rag, df_dense = self.run_dense()
+        
+        # Need BM25 retriever instance for hybrid - load from persist dir
+        persist_dir = f"./storage/bm25_{self.dataset_name}"
+        bm25 = LlamaIndexBM25.from_persist_dir(persist_dir)
         
         # Hybrid
         df_hybrid, hybrid_stats = self.run_hybrid(bm25, rag)

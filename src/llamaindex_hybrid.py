@@ -4,8 +4,11 @@ Chức năng: Hybrid search kết hợp BM25 và semantic search với RRF fusio
 """
 
 import logging
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
 from tqdm import tqdm
+
+if TYPE_CHECKING:
+    from src.kb.metadata import MetadataFilter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -47,17 +50,9 @@ class LlamaIndexHybrid:
         
         logger.info("✓ Hybrid Retriever initialized")
     
-    def search(self, query: str, top_k: int = 10) -> List[Dict]:
-        """
-        Hybrid search với RRF fusion
-        
-        Args:
-            query: Câu hỏi
-            top_k: Số kết quả cuối cùng
-            
-        Returns:
-            List các dict {'id', 'score', 'title', 'text', 'rank', 'source'}
-        """
+    def search(self, query: str, top_k: int = 10,
+               metadata_filter: "MetadataFilter" = None) -> List[Dict]:
+        """Hybrid search with RRF fusion and optional metadata filtering. Requirements: 4.1"""
         # Retrieve từ cả 2 systems với top_k=100 để có đủ candidates
         bm25_results = self.bm25.search(query, top_k=100)
         dense_results = self.dense.search(query, top_k=100)
@@ -115,33 +110,39 @@ class LlamaIndexHybrid:
                 'title': doc_info[doc_id]['title'],
                 'text': doc_info[doc_id]['text'],
                 'rank': rank,
-                'source': doc_sources[doc_id]  # 'bm25', 'dense', or 'both'
+                'source': doc_sources[doc_id]
             })
-        
+
+        # Apply metadata filter post-fusion
+        if metadata_filter is not None:
+            try:
+                from src.kb.metadata import MetadataFilterEngine, DocumentMetadata
+                from src.kb.knowledge_base import KnowledgeBase
+                kb = KnowledgeBase()
+                engine = MetadataFilterEngine()
+                allowed_ids = set(engine.apply(metadata_filter, [r['id'] for r in results], kb))
+                results = [r for r in results if r['id'] in allowed_ids]
+                for i, r in enumerate(results, 1):
+                    r['rank'] = i
+            except ImportError:
+                pass
+
         return results
-    
+
     def batch_search(
         self,
         queries: Dict[str, str],
-        top_k: int = 100
+        top_k: int = 100,
+        metadata_filter: "MetadataFilter" = None,
     ) -> Dict[str, List[Dict]]:
-        """
-        Batch hybrid search
-        
-        Args:
-            queries: Dict {query_id: query_text}
-            top_k: Số kết quả mỗi query
-            
-        Returns:
+        """Batch hybrid search with optional metadata filtering. Requirements: 4.1"""
             Dict {query_id: results}
         """
         logger.info(f"Batch Hybrid Search: {len(queries)} queries...")
-        
         results_dict = {}
-        
         for qid, query_text in tqdm(queries.items(), desc="Hybrid Search"):
-            results_dict[qid] = self.search(query_text, top_k=top_k)
-        
+            results_dict[qid] = self.search(query_text, top_k=top_k,
+                                            metadata_filter=metadata_filter)
         return results_dict
     
     def analyze_sources(self, results: List[Dict], top_k: int = 10) -> Dict:

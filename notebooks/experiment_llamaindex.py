@@ -16,6 +16,7 @@ from llamaindex_bm25 import LlamaIndexBM25
 from llamaindex_rag import LlamaIndexRAG
 from llamaindex_hybrid import LlamaIndexHybrid
 from metrics import RetrievalEvaluator
+from kb import KnowledgeBase, DocumentIngestionPipeline
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -54,8 +55,23 @@ class LlamaIndexExperiment:
         self.loader = BeirDataLoader()
         self.corpus, self.queries, self.qrels = self.loader.load_dataset(dataset_name)
         self.test_queries = self.loader.get_sample_queries(self.queries, n=n_queries)
+
+        # Build KB via ingestion pipeline (Requirements: 3.1, 3.4, 5.1)
+        self.kb = KnowledgeBase()
+        pipeline = DocumentIngestionPipeline(self.kb)
+        report = pipeline.ingest_beir_corpus(self.corpus, dataset_name)
+        print(f"✓ KB ingestion: {report['processed']} docs, {report['chunks_produced']} chunks, "
+              f"{report['error_count']} errors")
+
+        # Print KB stats
+        stats = self.kb.stats()
+        print(f"✓ KB stats: {stats['total_documents']} docs | "
+              f"{stats['total_chunks']} chunks | "
+              f"avg {stats['avg_chunks_per_document']} chunks/doc")
+        print(f"  Doc types: {stats['per_doc_type']}")
+
+        # Keep flat document list for retriever indexing (backward compat)
         self.documents = self.loader.prepare_corpus_for_indexing(self.corpus)
-        
         print(f"✓ Dataset: {len(self.corpus)} docs, {len(self.test_queries)} test queries")
         
         # Evaluator

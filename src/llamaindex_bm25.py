@@ -6,13 +6,16 @@ Chức năng: BM25 sparse retrieval sử dụng LlamaIndex framework
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 from tqdm import tqdm
 
 from llama_index.core import Document
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.retrievers.bm25 import BM25Retriever
+
+if TYPE_CHECKING:
+    from src.kb.metadata import MetadataFilter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -95,34 +98,27 @@ class LlamaIndexBM25:
         
         logger.info(f"✓ Indexed {len(documents)} documents ({len(self.nodes)} nodes)")
     
-    def search(self, query: str, top_k: int = 10) -> List[Dict]:
+    def search(self, query: str, top_k: int = 10,
+               metadata_filter: Optional["MetadataFilter"] = None) -> List[Dict]:
         """
-        BM25 search
-        
-        Args:
-            query: Câu hỏi
-            top_k: Số kết quả
-            
-        Returns:
-            List các dict {'id', 'score', 'title', 'text', 'rank'}
+        BM25 search with optional metadata filtering. Requirements: 4.1, 4.2, 4.3
         """
         if self.retriever is None:
             raise ValueError("Chưa build index! Gọi build_index() trước.")
-        
+
         # Update similarity_top_k
         self.retriever.similarity_top_k = top_k
-        
+
         # Retrieve
         retrieved_nodes = self.retriever.retrieve(query)
-        
+
         # Format results
         results = []
         for rank, node in enumerate(retrieved_nodes, 1):
             doc_id = node.node.metadata.get('doc_id', node.node.id_)
             title = node.node.metadata.get('title', 'No Title')
             text_snippet = node.node.metadata.get('text_snippet', '')
-            
-            # If we have corpus, get full info from it
+
             if self.corpus:
                 original_doc = next(
                     (d for d in self.corpus if d['id'] == doc_id),
@@ -131,7 +127,7 @@ class LlamaIndexBM25:
                 if original_doc:
                     title = original_doc['title']
                     text_snippet = original_doc['text']
-            
+
             results.append({
                 'id': doc_id,
                 'score': node.score if hasattr(node, 'score') else 0.0,
@@ -139,31 +135,47 @@ class LlamaIndexBM25:
                 'text': text_snippet,
                 'rank': rank
             })
-        
+
+        # Apply metadata filter post-retrieval
+        if metadata_filter is not None:
+            results = self._apply_filter(results, metadata_filter)
+            # Re-rank after filtering
+            for i, r in enumerate(results, 1):
+                r['rank'] = i
+
         return results
+
+    def _apply_filter(self, results: List[Dict],
+                      metadata_filter: "MetadataFilter") -> List[Dict]:
+        """Post-filter results by metadata. Requirements: 4.1"""
+        try:
+            from src.kb.metadata import MetadataFilterEngine
+            from src.kb.knowledge_base import KnowledgeBase
+        except ImportError:
+            return results
+        # Build a minimal KB from corpus metadata for filtering
+        kb = KnowledgeBase()
+        if self.corpus:
+            from src.kb.metadata import DocumentMetadata
+            for doc in self.corpus:
+                meta = DocumentMetadata(doc_id=doc['id'])
+                kb._metadata[doc['id']] = meta
+        engine = MetadataFilterEngine()
+        allowed_ids = set(engine.apply(metadata_filter, [r['id'] for r in results], kb))
+        return [r for r in results if r['id'] in allowed_ids]
     
     def batch_search(
         self,
         queries: Dict[str, str],
-        top_k: int = 100
+        top_k: int = 100,
+        metadata_filter: Optional["MetadataFilter"] = None,
     ) -> Dict[str, List[Dict]]:
-        """
-        Batch search cho evaluation
-        
-        Args:
-            queries: Dict {query_id: query_text}
-            top_k: Số kết quả mỗi query
-            
-        Returns:
-            Dict {query_id: results}
-        """
+        """Batch search with optional metadata filtering. Requirements: 4.1"""
         logger.info(f"Processing {len(queries)} queries with BM25...")
-        
         results_dict = {}
-        
         for qid, query_text in tqdm(queries.items(), desc="BM25 Retrieval"):
-            results_dict[qid] = self.search(query_text, top_k=top_k)
-        
+            results_dict[qid] = self.search(query_text, top_k=top_k,
+                                            metadata_filter=metadata_filter)
         return results_dict
     
     def persist(self, persist_dir: Optional[str] = None):

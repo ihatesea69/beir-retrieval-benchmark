@@ -5,9 +5,12 @@ Thay thế: FAISS → PostgreSQL+pgvector
 """
 
 import os
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 import logging
 from dotenv import load_dotenv
+
+if TYPE_CHECKING:
+    from src.kb.metadata import MetadataFilter
 
 from llama_index.core import (
     VectorStoreIndex,
@@ -145,37 +148,21 @@ class LlamaIndexRAG:
         
         logger.info(f"✓ Indexed {len(documents)} documents in PostgreSQL")
     
-    def search(self, query: str, top_k: int = 10) -> List[Dict]:
-        """
-        Semantic search với PostgreSQL+pgvector
-        
-        Args:
-            query: Câu hỏi/truy vấn
-            top_k: Số lượng kết quả
-            
-        Returns:
-            List các dict {'id', 'score', 'title', 'text', 'rank'}
-        """
+    def search(self, query: str, top_k: int = 10,
+               metadata_filter: Optional["MetadataFilter"] = None) -> List[Dict]:
+        """Semantic search with optional metadata filtering. Requirements: 4.1"""
         if self.index is None:
             raise ValueError("Chưa build index! Gọi build_index() trước.")
-        
-        # Create retriever
+
         retriever = self.index.as_retriever(similarity_top_k=top_k)
-        
-        # Retrieve nodes
         nodes = retriever.retrieve(query)
-        
-        # Format results
+
         results = []
         for rank, node in enumerate(nodes, 1):
             doc_id = node.node.metadata.get('doc_id', node.node.id_)
-            
-            # Find original document
             original_doc = next(
-                (d for d in self.corpus if d['id'] == doc_id),
-                None
+                (d for d in self.corpus if d['id'] == doc_id), None
             )
-            
             if original_doc:
                 results.append({
                     'id': doc_id,
@@ -184,8 +171,29 @@ class LlamaIndexRAG:
                     'text': original_doc['text'],
                     'rank': rank
                 })
-        
+
+        if metadata_filter is not None:
+            results = self._apply_filter(results, metadata_filter)
+            for i, r in enumerate(results, 1):
+                r['rank'] = i
+
         return results
+
+    def _apply_filter(self, results: List[Dict],
+                      metadata_filter: "MetadataFilter") -> List[Dict]:
+        """Post-filter results by metadata. Requirements: 4.1"""
+        try:
+            from src.kb.metadata import MetadataFilterEngine, DocumentMetadata
+            from src.kb.knowledge_base import KnowledgeBase
+        except ImportError:
+            return results
+        kb = KnowledgeBase()
+        if self.corpus:
+            for doc in self.corpus:
+                kb._metadata[doc['id']] = DocumentMetadata(doc_id=doc['id'])
+        engine = MetadataFilterEngine()
+        allowed_ids = set(engine.apply(metadata_filter, [r['id'] for r in results], kb))
+        return [r for r in results if r['id'] in allowed_ids]
     
     def generate_answer(
         self,
@@ -269,26 +277,16 @@ Answer (be concise and factual):"""
     def batch_search(
         self,
         queries: Dict[str, str],
-        top_k: int = 100
+        top_k: int = 100,
+        metadata_filter: Optional["MetadataFilter"] = None,
     ) -> Dict[str, List[Dict]]:
-        """
-        Batch search cho evaluation
-        
-        Args:
-            queries: Dict {query_id: query_text}
-            top_k: Số kết quả mỗi query
-            
-        Returns:
-            Dict {query_id: results}
-        """
+        """Batch search with optional metadata filtering. Requirements: 4.1"""
         logger.info(f"Đang xử lý {len(queries)} queries...")
-        
         results_dict = {}
-        
         from tqdm import tqdm
         for qid, query_text in tqdm(queries.items(), desc="Dense Retrieval"):
-            results_dict[qid] = self.search(query_text, top_k=top_k)
-        
+            results_dict[qid] = self.search(query_text, top_k=top_k,
+                                            metadata_filter=metadata_filter)
         return results_dict
 
 

@@ -185,56 +185,50 @@ class RetrievalEvaluator:
     def evaluate_retrieval(
         results: Dict[str, List[Dict]],
         qrels: Dict[str, Dict[str, int]],
-        k_values: List[int] = [3, 5, 10, 100]
+        k_values: List[int] = [3, 5, 10, 100],
+        graded: bool = False
     ) -> pd.DataFrame:
         """
-        Đánh giá kết quả retrieval cho nhiều queries
-        
+        Evaluate retrieval results for multiple queries
+
         Args:
             results: Dict {query_id: [retrieved_docs]}
             qrels: Ground truth {query_id: {doc_id: relevance}}
-            k_values: List các k để đánh giá
-            
+            k_values: List of k values to evaluate
+            graded: If True, use graded relevance for NDCG; also compute binary metrics
+
         Returns:
-            DataFrame chứa metrics cho từng query
+            DataFrame with metrics per query
         """
-        logger.info(f"Đang đánh giá {len(results)} queries...")
+        logger.info(f"Evaluating {len(results)} queries...")
         
         evaluation_data = []
         
         for query_id, retrieved_docs in tqdm(results.items(), desc="Evaluating"):
-            # Lấy doc IDs đã retrieve
             retrieved_ids = [doc['id'] for doc in retrieved_docs]
             
-            # Lấy ground truth
             if query_id not in qrels:
                 continue
             
-            relevant_ids = [
-                doc_id for doc_id, score in qrels[query_id].items() 
-                if score > 0
-            ]
+            query_qrels = qrels[query_id]
+            relevant_ids = [doc_id for doc_id, score in query_qrels.items() if score > 0]
             
-            # Tính metrics
             row = {'query_id': query_id}
             
-            # NDCG và Recall cho các k khác nhau
             for k in k_values:
-                ndcg = RetrievalEvaluator.calculate_ndcg_at_k(
-                    retrieved_ids, relevant_ids, k
-                )
-                recall = RetrievalEvaluator.calculate_recall_at_k(
-                    retrieved_ids, relevant_ids, k
-                )
-                precision = RetrievalEvaluator.calculate_precision_at_k(
-                    retrieved_ids, relevant_ids, k
-                )
+                if graded:
+                    from evaluation.advanced_metrics import GradedRelevanceEvaluator
+                    ndcg = GradedRelevanceEvaluator.calculate_graded_ndcg(retrieved_ids, query_qrels, k)
+                    row[f'GradedNDCG@{k}'] = ndcg
+                
+                ndcg = RetrievalEvaluator.calculate_ndcg_at_k(retrieved_ids, relevant_ids, k)
+                recall = RetrievalEvaluator.calculate_recall_at_k(retrieved_ids, relevant_ids, k)
+                precision = RetrievalEvaluator.calculate_precision_at_k(retrieved_ids, relevant_ids, k)
                 
                 row[f'NDCG@{k}'] = ndcg
                 row[f'Recall@{k}'] = recall
                 row[f'Precision@{k}'] = precision
             
-            # MAP và MRR
             row['MAP'] = RetrievalEvaluator.calculate_map(retrieved_ids, relevant_ids)
             row['MRR'] = RetrievalEvaluator.calculate_mrr(retrieved_ids, relevant_ids)
             
